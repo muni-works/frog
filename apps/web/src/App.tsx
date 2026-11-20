@@ -25,7 +25,7 @@ import { useMachines } from './machines'
 import { creditLine, Palette, type Command } from './ui/Overlays'
 import { TurnRail } from './ui/TurnRail'
 import { WindowControls } from './ui/WindowControls'
-import { SettingsPage, SettingsSidebar } from './ui/Settings'
+import { SettingsList, SettingsPage, SettingsSidebar } from './ui/Settings'
 import { pinModel, pinnedModel, rememberPick, sectionOfQuery, setTheme, settingsPath, settingsSectionOf, startingModel, toggledTheme, WEB_SECTIONS, type Section } from './settings'
 import { CustomizePage } from './ui/Customize'
 import { customizeAtOf, customizePath, customizePathIsCanonical, FIRST_CUSTOMIZE, isCustomizeSection, shownAt, type Automation, type CustomizeAt, type Report } from './customize'
@@ -125,6 +125,10 @@ export default function App() {
   const [docPage, setDocPage] = useState(() => docsSlugOf(location.pathname) || FIRST_DOC)
   const [section, setSection] = useState<Section>(first.section)
   const [cz, setCz] = useState<CustomizeAt>(first.customize)
+  // A phone's Settings is a list you drill into (frame 7): bare /settings is the list.
+  const [setList, setSetList] = useState(() => first.mode === 'settings' && settingsSectionOf(location.pathname) === '' && isNarrow())
+  // The list is the entry under a section opened from it: the section's back button is Back.
+  const listBelow = useRef(false)
   // Those five pages' figures come from an engine report (docs/customize-api.md), which no cloud path
   // answers yet: none, so nothing is guessed. Dev only, ?customize=sample draws the designs.
   const [czSample, setCzSample] = useState<{ report: Report; automations: Automation[] } | null>(null)
@@ -138,7 +142,7 @@ export default function App() {
   useEffect(() => {
     // A session still being created (a placeholder id) waits for its real id.
     const viewPath = pathOfView(view)
-    const path = mode === 'docs' ? docsPath(docPage) : mode === 'settings' ? (czOn ? customizePath(czAt) : settingsPath(section)) : viewPath
+    const path = mode === 'docs' ? docsPath(docPage) : mode === 'settings' ? (setList && isNarrow() ? '/settings' : czOn ? customizePath(czAt) : settingsPath(section)) : viewPath
     // api.frog.toys/account and /billing (and Stripe) land on ?settings=account|billing: the
     // section is open now, so the query goes, and anything else in it stays.
     const q = new URLSearchParams(location.search)
@@ -155,9 +159,9 @@ export default function App() {
     const renamed = (czUrl !== null && !customizePathIsCanonical(location.pathname))
       || (mode === 'settings' && !!czUrl?.page && customizePath(czUrl) !== path)
     // /pay is the plan sheet over the page: the sheet is open, so the URL is the page's.
-    if (asked || stale || renamed || isPayPath(location.pathname) || docsSlugOf(location.pathname) === '' || settingsSectionOf(location.pathname) === '') history.replaceState(state, '', path + (q.size ? `?${q}` : ''))
+    if (asked || stale || renamed || isPayPath(location.pathname) || docsSlugOf(location.pathname) === '' || (settingsSectionOf(location.pathname) === '' && !isNarrow())) history.replaceState(state, '', path + (q.size ? `?${q}` : ''))
     else history.pushState(state, '', path)
-  }, [view, mode, docPage, section, customizePath(czAt)])
+  }, [view, mode, docPage, section, customizePath(czAt), setList])
   useEffect(() => {
     const back = () => {
       // A sheet closing (its own history entry, ui/Sheet.tsx), not a page change.
@@ -165,9 +169,9 @@ export default function App() {
       const slug = docsSlugOf(location.pathname)
       if (slug !== null) { setMode('docs'); setDocPage(slug || FIRST_DOC); return }
       const c = customizeAtOf(location.pathname)
-      if (c && keyNow.current) { setMode('settings'); setSection(c.section); setCz(c); return }
+      if (c && keyNow.current) { setMode('settings'); setSection(c.section); setCz(c); setSetList(false); return }
       const at = settingsSectionOf(location.pathname)
-      if (at !== null && keyNow.current) { setMode('settings'); if (at) setSection(at); return }
+      if (at !== null && keyNow.current) { setMode('settings'); if (at) setSection(at); setSetList(at === '' && isNarrow()); if (at === '') listBelow.current = false; return }
       setMode('threads')
       setView(viewOf(at !== null || c ? backOf(history.state) : location.pathname))
     }
@@ -189,6 +193,8 @@ export default function App() {
     if (!keyNow.current) return
     if (s) setSection(s)
     if (s && isCustomizeSection(s)) setCz({ section: s })
+    // A phone: Settings without a section is the list.
+    setSetList(!s && isNarrow())
     // Only that visit takes the cursor: a later plain one to Billing doesn't.
     if (opts?.coupon) setCouponAsk((n) => n + 1)
     else setCouponAsk(0)
@@ -197,6 +203,7 @@ export default function App() {
   /** A page of Skills, Connections, Rules, Memory or Automations (a skill, Add, a review), in Settings. */
   const openCustomize = (at: CustomizeAt) => {
     if (!keyNow.current) return
+    setSetList(false)
     setSection(at.section)
     setCz(at)
     enter('settings')
@@ -779,6 +786,13 @@ export default function App() {
       )}
     </div>
   )
+  /** A phone's Settings section: back to the list (Back, when the list is the entry under it). */
+  const settingsBack = (
+    <button type="button" className="phone-ib phone-back" aria-label="Back to Settings"
+      onClick={() => { if (listBelow.current && typeof history.back === 'function') { listBelow.current = false; history.back() } else setSetList(true) }}>
+      <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M15 6l-6 6 6 6" /></svg>
+    </button>
+  )
   const paused = ct ? outOfCredits(ct) : false
   // A plan inside its allowance pays for turns without credit (the wall's Resume).
   const planOn = !!account?.subscription && !account.subscription.over
@@ -821,11 +835,12 @@ export default function App() {
       </>, docs: <DocsSidebar pages={DOCS} current={docPage} version={VERSION} onBack={backToApp} onOpen={openDocs} />,
       settings: key && <SettingsSidebar current={section} onBack={backToApp} onOpen={(x) => openSettings(x)} /> }}
       main={{ docs: <DocsPage pages={DOCS} slug={docPage} onOpen={openDocs} bar={<><Burger />{collapsed && sideToggle(false)}</>} />,
-      settings: key && (czOn ? <CustomizePage at={czAt} repos={repoList} report={czSample?.report ?? null} automations={czSample?.automations} machines={machines} docSlugs={DOCS.map((d) => d.slug)}
-        onOpen={(at) => openCustomize(at)} onDocs={openDocs} bar={<><Burger />{collapsed && sideToggle(false)}</>} />
+      settings: key && (narrow && setList ? <SettingsList account={account} free={free} onBack={backToApp} onOpen={(x) => { listBelow.current = true; openSettings(x) }} />
+      : czOn ? <CustomizePage at={czAt} repos={repoList} report={czSample?.report ?? null} automations={czSample?.automations} machines={machines} docSlugs={DOCS.map((d) => d.slug)}
+        onOpen={(at) => openCustomize(at)} onDocs={openDocs} bar={narrow ? settingsBack : <><Burger />{collapsed && sideToggle(false)}</>} />
       : <SettingsPage section={section} account={account} apiKey={!DEV_KEY ? key : undefined} models={models} machines={machines} focusCoupon={couponAsk}
         newMode={newMode} onNewMode={setNewMode} pinnedModel={pinned} onPinModel={setPinned}
-        bar={<><Burger />{collapsed && sideToggle(false)}</>} onOpen={(x) => openSettings(x)}
+        bar={narrow ? settingsBack : <><Burger />{collapsed && sideToggle(false)}</>} onOpen={(x) => openSettings(x)} free={free} addedCents={lastAdded ?? grant}
         onTopUp={!DEV_KEY ? (d) => topUp(key, d) : undefined} onSubscribe={!DEV_KEY ? (p) => subscribe(key, p) : undefined} onConnect={!DEV_KEY ? (p) => leave(null, p, key, false) : undefined}
         onSignOut={() => { if (!DEV_KEY) signOut(key); signedOut() }}
         onRedeemed={(r) => { setAccount((a) => (a ? { ...a, credit_cents: r.credit_cents } : a)); refreshAccount() }} />),

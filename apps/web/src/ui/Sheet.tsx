@@ -22,13 +22,17 @@ function useBackClose(onClose: () => void) {
   const closed = useRef(false)
   const done = useRef(onClose)
   done.current = onClose
+  const alive = useRef(false)
   useEffect(() => {
     open++
+    alive.current = true
     closed.current = false
     const canBack = typeof history !== 'undefined' && typeof history.back === 'function'
-    if (canBack) history.pushState({ ...(history.state ?? {}), sheet: id }, '', location.href)
+    const ours = () => (history.state as { sheet?: string } | null)?.sheet === id
+    // Once: React's StrictMode runs this twice, and the entry is already there the second time.
+    if (canBack && !ours()) history.pushState({ ...(history.state ?? {}), sheet: id }, '', location.href)
     const pop = () => {
-      if ((history.state as { sheet?: string } | null)?.sheet === id || closed.current) return
+      if (ours() || closed.current) return
       closed.current = true
       const after = pending.current
       pending.current = null
@@ -38,10 +42,13 @@ function useBackClose(onClose: () => void) {
     addEventListener('popstate', pop)
     return () => {
       removeEventListener('popstate', pop)
-      // Unmounted by the app itself (signed out, a session switch from elsewhere): its entry goes too.
-      if (!closed.current && canBack && (history.state as { sheet?: string } | null)?.sheet === id) { closed.current = true; history.back() }
-      // After the pop it caused has been seen: the count drops a frame later.
-      setTimeout(() => { open-- }, 0)
+      alive.current = false
+      // Unmounted by the app itself (signed out, a session switch from elsewhere): its entry goes
+      // too, unless it was only StrictMode's remount. The count drops after that pop is seen.
+      setTimeout(() => {
+        if (!alive.current && !closed.current && canBack && ours()) { closed.current = true; history.back() }
+        setTimeout(() => { open-- }, 0)
+      }, 0)
     }
   }, [id])
   const closeThen = useCallback((after?: () => void) => {

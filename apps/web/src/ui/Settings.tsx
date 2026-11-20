@@ -9,6 +9,10 @@ import { savedDensity, savedTheme, SECTIONS, setDensity, WEB_SECTIONS, setTheme,
 import { InvitePill } from './DownloadChip'
 import { ICON, Icon } from './icons'
 import { creditLine, dollars } from './Overlays'
+import { COPY, PLAN_FACTS, type PlanFact } from '../plans'
+import { leftLine } from '../wall'
+import { useNarrow, useTouch } from './phone'
+import { accountLine } from './SessionsSheet'
 
 // Settings mode (docs/design/app-shell.md): the shell's sidebar becomes the section list with
 // Back to app, and the main area shows one section. The sections and their rows come from
@@ -31,6 +35,48 @@ export function SettingsSidebar({ current, onBack, onOpen }: { current: Section;
         ))}
       </div>
     </div>
+  )
+}
+
+/** Settings on a phone (frame 7): a list you drill into. The account and Billing first, then the
+ *  sections in their runs; a section opens as its own page with a back button. Shortcuts isn't
+ *  listed on a touch screen. */
+export function SettingsList({ account, free, onBack, onOpen }: { account: Account | null; free: boolean; onBack: () => void; onOpen: (s: Section) => void }) {
+  const touch = useTouch()
+  const top: Section[] = ['account', 'billing', 'usage']
+  const runs = [
+    { name: 'The app', rows: WEB_SECTIONS.filter((x) => x.run === 1 && !(touch && x.id === 'shortcuts')) },
+    { name: 'What Frog knows and can do', rows: WEB_SECTIONS.filter((x) => x.run === 2) },
+    { name: 'More', rows: WEB_SECTIONS.filter((x) => x.run === 3 && !top.includes(x.id)) },
+  ].filter((r) => r.rows.length)
+  const label = (id: Section) => WEB_SECTIONS.find((x) => x.id === id)?.label ?? id
+  const who = account?.name ?? firstName(account) ?? 'Signed in'
+  const chev = <span className="set-ch" aria-hidden="true">›</span>
+  return (
+    <main className="main docs-main settings-main set-list-main">
+      <div className="titlebar phone-top">
+        <button type="button" className="phone-ib phone-back" aria-label="Back to app" onClick={onBack}><Icon d={ICON.arrowLeft} size={20} /></button>
+        <b className="phone-crumb">Settings</b>
+      </div>
+      <div className="scroll">
+        <nav className="col set-list" aria-label="Settings">
+          <button type="button" className="set-li set-li--acct" onClick={() => onOpen('account')}>
+            <span className="ss-av" aria-hidden="true">{who.slice(0, 1)}</span>
+            <span className="set-li-l"><b>{who}</b><span>{accountLine(account, free)}</span></span>{chev}
+          </button>
+          <button type="button" className="set-li" onClick={() => onOpen('billing')}>
+            <span className="set-li-l"><b>{label('billing')}</b></span><span className="set-li-v">{account?.subscription ? account.subscription.name : 'Get a plan'}</span>{chev}
+          </button>
+          <button type="button" className="set-li" onClick={() => onOpen('usage')}><span className="set-li-l"><b>{label('usage')}</b></span>{chev}</button>
+          {runs.map((r) => (
+            <div key={r.name} role="group" aria-label={r.name}>
+              <div className="ss-gl">{r.name}</div>
+              {r.rows.map((x) => <button key={x.id} type="button" className="set-li" onClick={() => onOpen(x.id)}><span className="set-li-l"><b>{x.label}</b></span>{chev}</button>)}
+            </div>
+          ))}
+        </nav>
+      </div>
+    </main>
   )
 }
 
@@ -71,6 +117,10 @@ export interface SettingsProps {
   /** Models › New conversations use: a pinned model id, or null for the last one picked. */
   pinnedModel?: string | null
   onPinModel?: (id: string | null) => void
+  /** On the free credit (plans.ts onFreeCredit), and the credit it's measured against: a phone's
+   *  Billing draws "19¢ of 25¢ left" (frame 8). */
+  free?: boolean
+  addedCents?: number | null
 }
 
 /** One section. */
@@ -137,11 +187,11 @@ export const RENDER: Record<string, (row: SettingRow, p: Ctx) => ReactNode> = {
   'frog-cloud': (_, p) => <FrogCloud account={p.account} onBilling={() => p.onOpen('billing')} />,
   'default-mode': (row, p) => <DefaultMode row={row} mode={p.newMode ?? 'auto'} onMode={p.onNewMode} />,
   'cloud-sandbox': (row) => <Row row={row}><span className="det" title="Each cloud session gets a machine of its own; nothing it runs reaches yours">Always on</span></Row>,
-  shortcuts: () => <Shortcuts />,
+  shortcuts: () => <TouchHidden><Shortcuts /></TouchHidden>,
   profile: (_, p) => <Profile {...p} />,
   'sign-ins': (_, p) => <Logins account={p.account} onConnect={p.onConnect} />,
   devices: (_, p) => p.apiKey ? <Keys apiKey={p.apiKey} /> : null,
-  plan: (_, p) => <Subscription account={p.account} apiKey={p.apiKey} onSubscribe={p.onSubscribe} />,
+  plan: (_, p) => <Subscription account={p.account} apiKey={p.apiKey} onSubscribe={p.onSubscribe} free={p.free} addedCents={p.addedCents} />,
   credit: (_, p) => <Credit {...p} />,
   'credit-history': (_, p) => p.apiKey ? <History key={p.historyStamp} apiKey={p.apiKey} /> : null,
   prices: (_, p) => <Prices models={p.models ?? []} />,
@@ -341,6 +391,11 @@ export const WEB_SHORTCUTS: [string, [string, string][]][] = [
   ['App', [['Command palette', '⌘K'], ['New session', '⌘N'], ['Settings', '⌘,'], ['Show or hide the sidebar', '⌘\\'], ['Back to app', 'Esc']]],
 ]
 
+/** Nothing on a touch screen: keys are no use there. */
+function TouchHidden({ children }: { children: ReactNode }) {
+  return useTouch() ? <div className="det wrap">Keyboard shortcuts work with a keyboard attached.</div> : <>{children}</>
+}
+
 function Shortcuts() {
   return WEB_SHORTCUTS.map(([group, keys]) => (
     <Fragment key={group}>
@@ -356,6 +411,12 @@ function Shortcuts() {
 
 /** Usage credit: the balance, Add credit and the code field, one card as on the Mac. */
 function Credit({ account, apiKey, focusCoupon, onTopUp, onRedeemed }: SettingsProps) {
+  const narrow = useNarrow()
+  // A phone (frame 8): Add credit as its own card, the amounts in one row; the code is a row that opens.
+  if (narrow) return (<>
+    {onTopUp && <div className="bill-card"><TopUp onTopUp={onTopUp} phone /></div>}
+    {apiKey && <Disclose label="Have a code?" open={!!focusCoupon}><Coupon apiKey={apiKey} focus={focusCoupon} onRedeemed={onRedeemed} /></Disclose>}
+  </>)
   return (
     <div className="bill-card">
       <div className="bill-h"><b>Usage credit</b><b className="num">{creditLine(account)}</b></div>
@@ -385,10 +446,12 @@ function Prices({ models }: { models: Model[] }) {
 }
 
 /** The plan and its allowance, or (without one) the plans to pick from. */
-function Subscription({ account, apiKey, onSubscribe }: { account: Account | null; apiKey?: string; onSubscribe?: (plan: string) => Promise<void> }) {
+function Subscription({ account, apiKey, onSubscribe, free, addedCents }: { account: Account | null; apiKey?: string; onSubscribe?: (plan: string) => Promise<void>; free?: boolean; addedCents?: number | null }) {
   const [busy, setBusy] = useState<string | null>(null)
   const [portalError, setPortalError] = useState<string | null>(null)
+  const narrow = useNarrow()
   const sub = account?.subscription
+  if (!sub && narrow) return <PhonePlans account={account} onSubscribe={onSubscribe} free={!!free} addedCents={addedCents ?? null} />
   if (sub) return (
     <div className="bill-card">
       <div className="bill-h"><b>{sub.name}</b>{sub.over ? <span className="bill-over">Using credit</span> : <span className="det">Included allowance</span>}</div>
@@ -427,23 +490,65 @@ function Subscription({ account, apiKey, onSubscribe }: { account: Account | nul
   )
 }
 
+/** Billing on the free plan, on a phone (frame 8): what's left as a bar, the three plans, and one
+ *  button for the picked one (the same subscribe path). */
+function PhonePlans({ account, onSubscribe, free, addedCents }: { account: Account | null; onSubscribe?: (plan: string) => Promise<void>; free: boolean; addedCents: number | null }) {
+  const [picked, setPicked] = useState<PlanFact>(PLAN_FACTS[0])
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const credit = Math.max(0, account?.credit_cents ?? 0)
+  const of = Math.max(addedCents ?? 0, credit)
+  const fill = of > 0 ? credit / of : 0
+  const left = free && of > 0 ? `${leftLine(credit)} of ${leftLine(of)} left` : `${leftLine(credit)} of credit`
+  return (
+    <div className="bill-card bill-phone">
+      <div className="bill-h"><b>{free ? 'Free' : 'No plan'}</b><span className="det">{left}</span></div>
+      <div className="ctx-bar bill-bar" role="img" aria-label={left}><span style={{ width: `${fill * 100}%`, background: fill <= 0.2 ? 'var(--notice)' : 'var(--frog)' }} /></div>
+      <div className="ps-plans" role="radiogroup" aria-label="Plans">
+        {PLAN_FACTS.map((x) => (
+          <button key={x.id} type="button" role="radio" aria-checked={x.id === picked.id} className={`ps-plan${x.id === picked.id ? ' on' : ''}`} onClick={() => setPicked(x)}>
+            <span className="ps-l"><b>{x.name}</b><span>{COPY.planLine(x)}</span></span>
+            <span className="ps-p">{COPY.planPrice(x)} <span>{COPY.planPer}</span></span>
+          </button>
+        ))}
+      </div>
+      {onSubscribe && <button type="button" className="f-btn f-btn--prominent ps-go" disabled={busy}
+        onClick={() => { setBusy(true); setError(null); onSubscribe(picked.id).catch((e) => { setBusy(false); setError(friendly(e)) }) }}>{busy ? 'Opening checkout…' : COPY.getPlan(picked)}</button>}
+      {error && <div role="alert" className="det wrap" style={{ color: 'var(--warn)' }}>Couldn't open checkout ({error}). Try again.</div>}
+    </div>
+  )
+}
+
+/** A row that opens what's under it (a phone's "Have a code?", "Credit you've added"). */
+function Disclose({ label, value, open: first = false, children }: { label: string; value?: string; open?: boolean; children: ReactNode }) {
+  const [open, setOpen] = useState(first)
+  return (
+    <div className="set-disclose">
+      <button type="button" className="set-li" aria-expanded={open} onClick={() => setOpen(!open)}>
+        <span className="set-li-l"><b>{label}</b></span>{value && <span className="set-li-v">{value}</span>}<span className="set-ch" aria-hidden="true">{open ? '⌄' : '›'}</span>
+      </button>
+      {open && <div className="set-disclose-body">{children}</div>}
+    </div>
+  )
+}
+
 /** Add credit: pick an amount, then Stripe Checkout. */
-function TopUp({ onTopUp }: { onTopUp: (dollars: number) => Promise<void> }) {
+function TopUp({ onTopUp, phone }: { onTopUp: (dollars: number) => Promise<void>; phone?: boolean }) {
   const [amount, setAmount] = useState(TOP_UPS[1])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   return (
-    <div className="topup">
-      <b>Add credit</b>
+    <div className={`topup${phone ? ' topup--phone' : ''}`}>
+      {phone ? <div className="bill-h"><b>Add credit</b><span className="det">Doesn't expire</span></div> : <b>Add credit</b>}
       <div className="topup-amts" role="radiogroup" aria-label="Amount">
         {TOP_UPS.map((d) => <button key={d} type="button" role="radio" aria-checked={amount === d} className={amount === d ? 'on' : ''} onClick={() => setAmount(d)}>${d}</button>)}
       </div>
-      <button type="button" className="f-btn f-btn--prominent" disabled={busy} style={{ justifyContent: 'center' }}
+      <button type="button" className={`f-btn ${phone ? 'f-btn--bordered' : 'f-btn--prominent'}`} disabled={busy} style={{ justifyContent: 'center' }}
         onClick={() => { setBusy(true); setError(null); onTopUp(amount).catch((e) => { setBusy(false); setError(friendly(e)) }) }}>
         {busy ? 'Opening Stripe…' : `Add $${amount}`}
       </button>
       {error && <div className="det" style={{ color: 'var(--warn)' }}>Couldn't start checkout ({error}). Try again.</div>}
-      <div className="det wrap">Paid through Stripe. Credit doesn't expire.</div>
+      <div className="det wrap">{phone ? 'Paid through Stripe.' : "Paid through Stripe. Credit doesn't expire."}</div>
     </div>
   )
 }
@@ -491,6 +596,17 @@ const rowDollars = (t: CreditRow) => (t.amount_micro_usd != null ? t.amount_micr
 function History({ apiKey }: { apiKey: string }) {
   const [rows, setRows] = useState<CreditRow[] | null>(null)
   useEffect(() => { billingHistory(apiKey).then(setRows, () => setRows([])) }, [apiKey])
+  const narrow = useNarrow()
+  // A phone (frame 8): a row that opens to stacked rows, not an edge-to-edge table.
+  if (narrow) return (
+    <Disclose label="Credit you've added" value={rows == null ? '' : rows.length ? `${rows.length}` : 'None yet'}>
+      {rows?.length ? rows.map((t, i) => (
+        <div key={`${t.at}-${i}`} className="hist-row">
+          <span className="hist-l"><b>${rowDollars(t).toFixed(2)}</b><span className="det">{[day(t.at), creditRowLabel(t), !t.status || t.status === 'succeeded' ? '' : t.status].filter(Boolean).join(', ')}</span></span>
+        </div>
+      )) : <div className="det">Nothing yet.</div>}
+    </Disclose>
+  )
   if (!rows?.length) return null
   return (
     <div className="set-prices credit-history">

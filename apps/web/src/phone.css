@@ -74,6 +74,7 @@
   .phone-title:active { background: var(--hover); }
   .phone-ib { margin-left: auto; flex: none; width: 44px; height: 44px; display: grid; place-items: center; border: 0; border-radius: 10px; background: transparent; color: var(--muted); cursor: pointer; }
   .phone-ib:active { background: var(--hover); }
+  .phone-ib.phone-back { margin-left: 0; color: var(--fg); }
   .phone-signin { margin-left: auto; flex: none; min-height: 44px; padding: 0 18px; font-size: 15px; }
   .phone-top .title-edit { flex: 1; font-size: 16px; height: 40px; }
   /* Standalone (Add to Home Screen): clear the notch and the home indicator. */
@@ -121,4 +122,41 @@ span.ss-who { cursor: default; }
 @media (max-width: 760px) {
   .cz-chip, .cz-act, .cz-signin, .cz-meter { position: relative; }
   .cz-chip::after, .cz-act::after, .cz-signin::after, .cz-meter::after { content: ''; position: absolute; inset: -10px -4px; }
+}
+
+/* ---- Settings on a phone (frames 7, 8) ---- */
+.set-li { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 52px; padding: 6px 4px; border: 0; background: none; color: var(--fg); font: inherit; text-align: left; cursor: pointer; }
+.set-li + .set-li { border-top: 1px solid var(--edge); }
+.set-li:active { background: var(--hover); }
+.set-li--acct { min-height: 64px; }
+.set-li-l { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.set-li-l b { font-weight: 400; font-size: 15px; line-height: 22px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.set-li--acct .set-li-l b { font-weight: 600; }
+.set-li-l span { font-size: 13px; line-height: 18px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.set-li-v { color: var(--muted); font-size: 14px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.set-ch { color: var(--faint); font-size: 18px; width: 12px; text-align: center; flex: none; }
+.set-list { gap: 0; padding-bottom: 32px; }
+.set-list [role=group] { display: flex; flex-direction: column; }
+.phone-crumb { font-weight: 600; font-size: 16px; }
+.set-disclose { border-top: 1px solid var(--edge); }
+.set-disclose + .set-disclose { border-top: 1px solid var(--edge); }
+.set-disclose-body { padding: 2px 4px 14px; display: flex; flex-direction: column; }
+.hist-row { display: flex; align-items: center; min-height: 48px; padding: 6px 0; }
+.hist-row + .hist-row { border-top: 1px solid var(--edge); }
+.hist-l { display: flex; flex-direction: column; font-variant-numeric: tabular-nums; }
+.hist-l b { font-weight: 600; font-size: 15px; }
+.bill-phone { gap: 10px; }
+.bill-bar { height: 6px; border-radius: 3px; }
+.topup--phone .topup-amts { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+.topup--phone .topup-amts button { height: 44px; padding: 0; border-radius: 12px; font-weight: 400; font-variant-numeric: tabular-nums; }
+.topup--phone .topup-amts button.on { font-weight: 600; }
+.topup--phone .f-btn { min-height: 44px; font-size: 15px; }
+@media (max-width: 760px) {
+  .settings-main .titlebar { height: 52px; padding: 0 12px 0 4px; gap: 4px; }
+  .settings-main .crumbs { font-size: 16px; }
+  .settings-main .crumbs b { font-weight: 600; }
+  .settings-main .col { padding: 0 16px; box-sizing: border-box; }
+  .settings-page .set-row .f-btn, .settings-page .coupon .f-btn { min-height: 44px; }
+  .settings-page .f-field, .coupon .f-field { font-size: 16px; min-height: 44px; }
+  .settings-page .set-seg button { min-height: 44px; }
 }
