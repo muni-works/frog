@@ -14,6 +14,8 @@ import { pause, until, type Page } from "./cdp.ts";
 import { AUDIT, rig, type Rig } from "./phone-rig.ts";
 
 const skip = chrome ? false : "no Chrome on this machine";
+// Each test ends as a named failure within a minute; the file as a whole runs longer (npm test's --test-timeout).
+
 let r: Rig;
 let task = "";
 const KEY = "frog_layout_ada";
@@ -42,7 +44,7 @@ const attr = (p: Page, sel: string, a: string) => p.eval<string | null>(`documen
 const tap = (p: Page, sel: string) => p.eval<boolean>(`(() => { const el = document.querySelector(${JSON.stringify(sel)}); if (!el) return false; el.click(); return true })()`);
 
 for (const [w, h] of [[390, 844], [360, 780]] as const) {
-  test(`phone ${w}: home signed out, the question, the starters, the meter's words`, { skip }, async () => {
+  test(`phone ${w}: home signed out, the question, the starters, the meter's words`, { skip, timeout: 60_000 }, async () => {
     const p = await r.phone("/", w, h, null);
     try {
       assert.ok(await has(p, ".ph-body"));
@@ -54,7 +56,7 @@ for (const [w, h] of [[390, 844], [360, 780]] as const) {
     } finally { await p.close(); }
   });
 
-  test(`phone ${w}: home signed in`, { skip }, async () => {
+  test(`phone ${w}: home signed in`, { skip, timeout: 60_000 }, async () => {
     const p = await r.phone("/", w, h, NEW);
     try {
       assert.ok(await has(p, ".cz-meter"));
@@ -64,7 +66,7 @@ for (const [w, h] of [[390, 844], [360, 780]] as const) {
     } finally { await p.close(); }
   });
 
-  test(`phone ${w}: a conversation, the title is the header, no desktop chrome`, { skip }, async () => {
+  test(`phone ${w}: a conversation, the title is the header, no desktop chrome`, { skip, timeout: 60_000 }, async () => {
     const p = await r.phone(`/s/${task}`, w, h, KEY);
     try {
       assert.ok(await has(p, ".tx"));
@@ -78,7 +80,7 @@ for (const [w, h] of [[390, 844], [360, 780]] as const) {
     } finally { await p.close(); }
   });
 
-  test(`phone ${w}: the sessions sheet opens from the title and closes with Back`, { skip }, async () => {
+  test(`phone ${w}: the sessions sheet opens from the title and closes with Back`, { skip, timeout: 60_000 }, async () => {
     const p = await r.phone(`/s/${task}`, w, h, KEY);
     try {
       assert.ok(await has(p, ".phone-title"));
@@ -95,7 +97,7 @@ for (const [w, h] of [[390, 844], [360, 780]] as const) {
     } finally { await p.close(); }
   });
 
-  test(`phone ${w}: the meter opens the plan sheet`, { skip }, async () => {
+  test(`phone ${w}: the meter opens the plan sheet`, { skip, timeout: 60_000 }, async () => {
     const p = await r.phone(`/s/${task}`, w, h, KEY);
     try {
       assert.ok(await has(p, ".cz-meter"));
@@ -122,7 +124,7 @@ for (const [w, h] of [[390, 844], [360, 780]] as const) {
     } finally { await p.close(); }
   });
 
-  test(`phone ${w}: /pay is the plan sheet, signed out too`, { skip }, async () => {
+  test(`phone ${w}: /pay is the plan sheet, signed out too`, { skip, timeout: 60_000 }, async () => {
     const p = await r.phone("/pay", w, h, null);
     try {
       assert.ok(await has(p, ".plan-sheet"));
@@ -135,7 +137,7 @@ for (const [w, h] of [[390, 844], [360, 780]] as const) {
     } finally { await p.close(); }
   });
 
-  test(`phone ${w}: Settings is a list; Billing opens as its own page`, { skip }, async () => {
+  test(`phone ${w}: Settings is a list; Billing opens as its own page`, { skip, timeout: 60_000 }, async () => {
     const p = await r.phone("/settings", w, h, KEY);
     try {
       assert.ok(await has(p, ".set-list"));
@@ -156,7 +158,7 @@ for (const [w, h] of [[390, 844], [360, 780]] as const) {
 // A plan bought from the credit wall (item 6): See plans, Get Pro through the existing subscribe
 // path (the mock's Checkout comes straight back with ?session_id), the session reopens, the wall
 // says the plan is on, and Resume picks the turn up; the plan pays for it.
-test("phone 390: a plan bought from the wall resumes the stopped turn", { skip }, async () => {
+test("phone 390: a plan bought from the wall resumes the stopped turn", { skip, timeout: 60_000 }, async () => {
   const key = "frog_layout_wall";
   await r.call(key, "/v1/mock/account", { credit_cents: 25, history: [], plan: null });
   const id = await r.session(key, ["Add a README"]);
@@ -208,7 +210,7 @@ for (const w of [360, 375]) {
     { name: "on a plan, a long repo", acct: { credit_cents: 500, plan: "pro", weekly: 0.12, history: [], repos: [LONG] }, meter: "12% of week", repo: LONG },
     { name: "out of credit, a long repo", acct: { credit_cents: 0, plan: null, history: [], repos: [LONG] }, meter: "Out of credit", repo: LONG },
   ]) {
-    test(`phone ${w}: the where-chip keeps its start beside the meter, ${s.name}`, { skip }, async () => {
+    test(`phone ${w}: the where-chip keeps its start beside the meter, ${s.name}`, { skip, timeout: 60_000 }, async () => {
       const key = `frog_chip_${w}_${s.name.replace(/\W+/g, "_")}`;
       await r.call(key, "/v1/mock/account", s.acct);
       const p = await r.phone("/", w, w === 360 ? 780 : 812, key);
@@ -245,7 +247,7 @@ const planAcct = (plan: string, weekly: number, extra: Record<string, unknown> =
 const rows = (p: Page) => p.eval<string[]>("[...document.querySelectorAll('.ps-row-plan')].map((r) => r.querySelector('b').textContent + ': ' + (r.querySelector('button, .ps-yours')?.textContent ?? ''))");
 
 for (const w of [360, 390]) {
-  test(`phone ${w}: Billing on a plan fits, long prices and all, with the three plans and a quiet Cancel plan`, { skip }, async () => {
+  test(`phone ${w}: Billing on a plan fits, long prices and all, with the three plans and a quiet Cancel plan`, { skip, timeout: 60_000 }, async () => {
     await r.call("frog_models", "/v1/mock/models", { data: LONG_PRICES });
     const key = `frog_bill_plan_${w}`;
     await r.call(key, "/v1/mock/account", planAcct("pro", 0.12));
@@ -262,7 +264,7 @@ for (const w of [360, 390]) {
   });
 }
 
-test("phone 390: each plan's sheet marks its own and offers the others", { skip }, async () => {
+test("phone 390: each plan's sheet marks its own and offers the others", { skip, timeout: 60_000 }, async () => {
   const want: Record<string, string[]> = {
     pro: ["Pro: Your plan", "Max: Upgrade to Max", "Ultra: Upgrade to Ultra"],
     max5: ["Pro: Switch to Pro", "Max: Your plan", "Ultra: Upgrade to Ultra"],
@@ -283,7 +285,7 @@ test("phone 390: each plan's sheet marks its own and offers the others", { skip 
   }
 });
 
-test("phone 390: a stale plan says so in plain muted words, with every plan below to set one up", { skip }, async () => {
+test("phone 390: a stale plan says so in plain muted words, with every plan below to set one up", { skip, timeout: 60_000 }, async () => {
   const key = "frog_stale";
   await r.call(key, "/v1/mock/account", planAcct("pro", 0.12, { stale: true }));
   const p = await r.phone("/settings/billing", 390, 844, key);
@@ -299,7 +301,7 @@ test("phone 390: a stale plan says so in plain muted words, with every plan belo
   } finally { await p.close(); }
 });
 
-test("phone 390: at 80% of the week, a quiet line and the sheet lead with the next plan up", { skip }, async () => {
+test("phone 390: at 80% of the week, a quiet line and the sheet lead with the next plan up", { skip, timeout: 60_000 }, async () => {
   const key = "frog_near";
   await r.call(key, "/v1/mock/account", planAcct("pro", 0.1));
   const id = await r.session(key, ["Add a README"]);
@@ -316,7 +318,7 @@ test("phone 390: at 80% of the week, a quiet line and the sheet lead with the ne
   } finally { await p.close(); }
 });
 
-test("phone 390: Upgrade to Max in Billing changes the plan in place, no page leaves", { skip }, async () => {
+test("phone 390: Upgrade to Max in Billing changes the plan in place, no page leaves", { skip, timeout: 60_000 }, async () => {
   const key = "frog_up_billing";
   await r.call(key, "/v1/mock/account", planAcct("pro", 0.4));
   const p = await r.phone("/settings/billing", 390, 844, key);
@@ -333,7 +335,7 @@ test("phone 390: Upgrade to Max in Billing changes the plan in place, no page le
   } finally { await p.close(); }
 });
 
-test("phone 390: past the plan at the wall, Upgrade to Max and the turn picks up by itself", { skip }, async () => {
+test("phone 390: past the plan at the wall, Upgrade to Max and the turn picks up by itself", { skip, timeout: 60_000 }, async () => {
   const key = "frog_wall_plan";
   await r.call(key, "/v1/mock/account", planAcct("pro", 0.3));
   const id = await r.session(key, ["Add a README"]);
@@ -355,7 +357,7 @@ test("phone 390: past the plan at the wall, Upgrade to Max and the turn picks up
   } finally { await p.close(); }
 });
 
-test("phone 390: an edge without the plan change (404) falls back to the portal, and the wall resumes after", { skip }, async () => {
+test("phone 390: an edge without the plan change (404) falls back to the portal, and the wall resumes after", { skip, timeout: 60_000 }, async () => {
   const key = "frog_wall_portal";
   await r.call(key, "/v1/mock/account", planAcct("pro", 0.3));
   const id = await r.session(key, ["Add a README"]);
@@ -375,7 +377,7 @@ test("phone 390: an edge without the plan change (404) falls back to the portal,
   } finally { await p.close(); }
 });
 
-test("phone 390: a declined card says so and leaves the plan as it was", { skip }, async () => {
+test("phone 390: a declined card says so and leaves the plan as it was", { skip, timeout: 60_000 }, async () => {
   const key = "frog_decline";
   await r.call(key, "/v1/mock/account", planAcct("pro", 0.4, { decline: true }));
   const p = await r.phone("/settings/billing", 390, 844, key);
@@ -388,7 +390,7 @@ test("phone 390: a declined card says so and leaves the plan as it was", { skip 
   } finally { await p.close(); }
 });
 
-test("phone 390: Get a plan on an account the edge says already has one changes it instead of a second subscription", { skip }, async () => {
+test("phone 390: Get a plan on an account the edge says already has one changes it instead of a second subscription", { skip, timeout: 60_000 }, async () => {
   const key = "frog_already";
   await r.call(key, "/v1/mock/account", planAcct("pro", 0.1, { hidden_plan: true }));
   const p = await r.phone("/", 390, 844, key);
