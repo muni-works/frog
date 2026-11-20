@@ -102,6 +102,8 @@ export interface FallbackEnv {
   go: (href: string) => void
   on: (event: 'blur' | 'pagehide' | 'visibilitychange', f: () => void) => () => void
   hidden: () => boolean
+  /** The page has the keyboard (`document.hasFocus`). */
+  focused: () => boolean
   storage?: Pick<Storage, 'setItem'>
   later: (f: () => void, ms: number) => void
 }
@@ -114,19 +116,22 @@ const browserEnv = (): FallbackEnv => ({
     return () => target.removeEventListener(event, f)
   },
   hidden: () => document.visibilityState === 'hidden',
+  focused: () => document.hasFocus(),
   storage: (() => { try { return sessionStorage } catch { return undefined } })(),
   later: (f, ms) => { setTimeout(f, ms) },
 })
 
-/** Try the Mac app's link; if this page still has the window after `wait` (nothing answered
- *  `frog://`, so no app), go to `fallback` with the draft kept for the composer to take back. */
+/** Try the Mac app's link; go to `fallback` (with the draft kept for the composer to take back)
+ *  only if this page stayed visible and focused for the whole `wait`: nothing answered `frog://`,
+ *  so no app. The app opening takes the window (`blur`, `pagehide`, `visibilitychange`), which
+ *  cancels the redirect, so someone with the app is never sent to the download. */
 export function openWithFallback(href: string, fallback: string, draft: string, wait = 2000, env: FallbackEnv = browserEnv()): void {
   let left = false
   const offs = (['blur', 'pagehide', 'visibilitychange'] as const).map((e) => env.on(e, () => { left = true }))
   env.go(href)
   env.later(() => {
     offs.forEach((off) => off())
-    if (left || env.hidden()) return
+    if (left || env.hidden() || !env.focused()) return
     try { if (draft.trim()) env.storage?.setItem(HANDOFF_DRAFT_KEY, draft) } catch { /* private mode */ }
     env.go(fallback)
   }, wait)

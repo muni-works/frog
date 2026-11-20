@@ -217,15 +217,16 @@ test("the menu's local rows carry what's typed and the session's repo", () => {
 const fakeEnv = () => {
   const went: string[] = [], stored = new Map<string, string>()
   const handlers = new Map<string, Set<() => void>>()
-  let timer: (() => void) | null = null, hidden = false
+  let timer: (() => void) | null = null, hidden = false, focused = true
   const env: FallbackEnv = {
     go: (h) => { went.push(h) },
     on: (e, f) => { const s = handlers.get(e) ?? new Set(); s.add(f); handlers.set(e, s); return () => s.delete(f) },
     hidden: () => hidden,
+    focused: () => focused,
     storage: { setItem: (k, v) => { stored.set(k, v) } },
     later: (f) => { timer = f },
   }
-  return { env, went, stored, fire: (e: string) => handlers.get(e)?.forEach((f) => f()), tick: () => timer?.(), hide: () => { hidden = true }, live: () => [...handlers.values()].reduce((n, s) => n + s.size, 0) }
+  return { env, went, stored, fire: (e: string) => handlers.get(e)?.forEach((f) => f()), tick: () => timer?.(), hide: () => { hidden = true }, unfocus: () => { focused = false }, live: () => [...handlers.values()].reduce((n, s) => n + s.size, 0) }
 }
 
 test("nothing answers frog:// — the download, with the draft kept", () => {
@@ -252,6 +253,12 @@ test("the app answered (the window went to it) — no download", () => {
   f.hide();
   f.tick();
   assert.deepEqual(f.went, ["frog://new"], "a hidden tab means the app took it");
+  const g = fakeEnv();
+  openWithFallback("frog://new", "/download", "hi", 2000, g.env);
+  g.unfocus();
+  g.tick();
+  assert.deepEqual(g.went, ["frog://new"], "focus gone without a blur event: still the app's");
+  assert.equal(g.stored.size, 0);
 });
 
 test("an empty draft isn't kept; a kept one comes back once", () => {
