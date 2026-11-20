@@ -139,12 +139,9 @@ struct ExplainerCard: View {
     let section: String
     var catalog = CustomizeCatalog.bundled
 
-    /// Memory's second sentence promises notes taken on their own; until this build lets the
-    /// engine take them, it says what happens today.
-    static func rest(_ section: String, _ e: CustomizeCatalog.Explainer) -> String {
-        guard section == "memory", !CustomizeStore.notesCapability else { return e.rest }
-        return "It keeps the notes you ask for on this Mac, and brings back only the few that fit the turn."
-    }
+    /// The card's second sentence. design/settings.json says only what this build does (Memory
+    /// promises no notes taken on their own), so it's shown as written.
+    static func rest(_ section: String, _ e: CustomizeCatalog.Explainer) -> String { e.rest }
 
     var body: some View {
         if let e = catalog.explainer(section) {

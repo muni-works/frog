@@ -120,8 +120,7 @@ test("every list page opens with its explainer card: the bold sentence, one more
     assert.equal(shownText(find(p, (n) => n.type === "b" && shownText(n) === x.lead)!), x.lead);
     assert.ok(shownText(card).includes(x.rest), s.id);
     const link = find(p, (n) => n.type === "a" && shownText(n) === x.link);
-    if (s.id === "automations") assert.equal(link, undefined, "no docs page for automations yet, so no dead link");
-    else assert.match(String(link?.props.href), /^\/docs\/[\w-]+$/, s.id);
+    assert.equal(link?.props.href, `/docs/${s.id}`, `${s.id} links its own docs page`);
     p.unmount();
   }
 });

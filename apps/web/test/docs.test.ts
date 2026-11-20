@@ -195,3 +195,30 @@ test("in Documentation mode the right sidebar is hidden", () => {
   assert.match(on, /<div class="shell-keep" style="display:contents"><section class="insp/);
   assert.ok(!on.includes("docs-side"));
 });
+
+// ---------- the Settings explainers' links ----------
+
+test("every explainer link in design/settings.json lands on its own docs page, on the web and from the Mac", async () => {
+  const { docsSlugFor } = await import("../src/customize.ts");
+  const settings = JSON.parse(readFileSync(new URL("../../../design/settings.json", import.meta.url), "utf8")) as
+    { sections: { id: string; explainer?: { href: string; fallback?: string } }[] };
+  const withLinks = settings.sections.filter((s) => s.explainer);
+  assert.equal(withLinks.length, 5, "Skills, Connections, Rules, Memory, Automations");
+  const slugs = WEB.map((p) => p.slug);
+  for (const s of withLinks) {
+    const m = s.explainer!.href.match(/^https:\/\/frog\.toys\/docs\/([a-z0-9-]+)$/);
+    assert.ok(m, `${s.id}: ${s.explainer!.href} is a frog.toys/docs page`);
+    const slug = m![1];
+    assert.equal(slug, s.id, `${s.id} links its own page`);
+    assert.equal(docsSlugOf(`/docs/${slug}`), slug, `${slug}: the app routes /docs/${slug}`);
+    const page = WEB.find((p) => p.slug === slug);
+    assert.ok(page, `${slug} is in docs/app/manifest.json`);
+    assert.ok(read(page!.file), `${page!.file} exists`);
+    // frog.toys renders the web's text, and the Mac's card opens frog.toys: the page must say
+    // something there, not only in a mac block.
+    assert.ok(page!.body.length > 400, `${slug} has a real page on the web`);
+    assert.ok(pages(manifest, read, "mac").find((p) => p.slug === slug)!.body.length > 400, `${slug} on the Mac`);
+    assert.equal(docsSlugFor(s.id as never, slugs), slug, `${s.id}: the web's card links its own page, not the fallback`);
+    if (s.explainer!.fallback) assert.ok(slugs.includes(s.explainer!.fallback), `${s.id}: its fallback ${s.explainer!.fallback} exists too`);
+  }
+});

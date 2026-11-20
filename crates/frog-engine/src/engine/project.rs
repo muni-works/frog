@@ -196,7 +196,8 @@ impl Agent {
     }
 
     /// Below this window (tokens), the prompt keeps to what a small model can hold: no
-    /// subagents, no MCP instructions or schemas until loaded, skills by name only.
+    /// subagents, no MCP instructions or schemas until loaded, and no skills (no Skill tool,
+    /// no catalog).
     pub(super) const COMPACT_WINDOW: u64 = 16_384;
     /// Characters of repo map a small window gets.
     pub(super) const SMALL_REPO_MAP: usize = 1_200;

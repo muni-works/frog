@@ -20,6 +20,16 @@
       ]
     },
     {
+      "title": "What Frog knows",
+      "pages": [
+        { "slug": "skills", "title": "Skills", "file": "settings/skills.md" },
+        { "slug": "connections", "title": "Connections", "file": "settings/connections.md" },
+        { "slug": "rules", "title": "Rules", "file": "settings/rules.md" },
+        { "slug": "memory", "title": "Memory", "file": "settings/memory.md" },
+        { "slug": "automations", "title": "Automations", "file": "settings/automations.md" }
+      ]
+    },
+    {
       "title": "Models",
       "pages": [
         { "slug": "on-your-mac", "title": "On your Mac", "file": "models/on-your-mac.md" },
