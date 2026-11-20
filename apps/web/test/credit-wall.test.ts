@@ -296,3 +296,25 @@ test("a resumed turn shows one quiet line in the transcript, not the note as a m
   assert.doesNotMatch(html, /&lt;resumed after/, "the note never shows as text");
   assert.equal((html.match(/class="me"/g) ?? []).length, 2, "the two typed messages stay bubbles");
 });
+
+test("a plan bought from the wall: back from Checkout the session reopens, no polling for credit, and Resume by hand with the plan on", async () => {
+  const storage = mem();
+  const w0 = harness({ thread: stopped(6), storage });
+  w0.api.leaving(0, 0, true);
+  const p = takePending(storage)!;
+  assert.deepEqual({ ...p, at: 0 }, { session: "s1", turn: 6, cents: 0, before: 0, at: 0, plan: true });
+  w0.unmount();
+  savePending(storage, p);
+  let polls = 0;
+  const w = harness({ thread: stopped(6), session: null, storage, search: "?session_id=cs_test_plan", fetchMe: async () => { polls++; return acct(0); } });
+  await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
+  assert.deepEqual(w.opened, ["s1"]);
+  assert.equal(polls, 0, "a plan isn't credit: nothing waits for the balance to rise");
+  assert.equal(w.api.waiting, null);
+  w.update({ session: "s1" });
+  assert.equal(w.api.resumeByHand(0), undefined, "no Resume until the plan shows on the account");
+  act(() => { w.api.resumeByHand(0, true)!(); });
+  assert.deepEqual(w.sent, [{ session: "s1", op: { op: "continue", note: resumeNote(undefined, true) } }]);
+  assert.equal(resumedLine(resumeNote(undefined, true)), "Plan started. Frog picked up where it stopped.");
+  w.unmount();
+});

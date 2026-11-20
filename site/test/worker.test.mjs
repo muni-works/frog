@@ -115,6 +115,14 @@ test("/settings/<section> and Skills' and Connections' detail pages serve the ap
   assert.equal((await worker.fetch(new Request("https://frog.toys/settings/a/b/c/d"), { ASSETS })).status, 404);
 });
 
+test("/pay serves the app's page, which opens the plan sheet; /pay/anything stays 404", async () => {
+  const seen = [];
+  const ASSETS = { fetch: async (u) => { seen.push(new URL(u).pathname); return new Response("<!doctype html>app"); } };
+  for (const path of ["/pay", "/pay/"]) assert.equal((await worker.fetch(new Request(`https://frog.toys${path}`), { ASSETS })).status, 200, path);
+  assert.deepEqual(seen, ["/", "/"]);
+  assert.equal((await worker.fetch(new Request("https://frog.toys/pay/pro"), { ASSETS })).status, 404);
+});
+
 test("old /customize/<section> links and their detail pages still serve the app (it sends them on to Settings); deeper paths stay 404", async () => {
   const seen = [];
   const ASSETS = { fetch: async (u) => { seen.push(new URL(u).pathname); return new Response("<!doctype html>app"); } };

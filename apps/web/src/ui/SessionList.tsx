@@ -14,7 +14,7 @@ import { indented } from './nest'
 
 type Glyph = 'run' | 'ask' | 'unread' | 'fail' | 'paused' | null
 
-function look(s: SessionSummary, t: Thread, unread: boolean): { glyph: Glyph; detail: string | null } {
+export function look(s: SessionSummary, t: Thread, unread: boolean): { glyph: Glyph; detail: string | null } {
   if (t.ask) return { glyph: 'ask', detail: askLine(t.ask.name, t.ask.arg) }
   if (t.question) return { glyph: 'ask', detail: t.question.question }
   if (t.elicitation) return { glyph: 'ask', detail: `${t.elicitation.server} needs your input` }
@@ -27,7 +27,7 @@ function look(s: SessionSummary, t: Thread, unread: boolean): { glyph: Glyph; de
 }
 
 const DAY = 86_400_000
-function day(ms: number, now: number): string {
+export function day(ms: number, now: number): string {
   const start = new Date(now); start.setHours(0, 0, 0, 0)
   const t0 = start.getTime()
   if (ms >= t0) return 'Today'

@@ -82,3 +82,29 @@ export function WhatIsFrog() {
     </section>
   )
 }
+
+/** Home on a phone (frames 1 and 2): the question low on the screen, the starters as rows with
+ *  their time and cost, signed out one line of pricing, and the composer pinned at the bottom. */
+export function PhoneHome({ signedOut, starters, onStarter, composer, below }: {
+  signedOut: boolean
+  starters: { title: string; detail: string }[]
+  onStarter: (i: number) => void
+  composer: ReactNode
+  below?: ReactNode
+}) {
+  return (<>
+    <div className="ph-body">
+      <h1 className="ph-h">What should we<br />work on?</h1>
+      {signedOut ? <p className="det wrap ph-lead">Hand Frog a task and close the tab. It keeps working.</p> : <div className="ss-gl">Start with one of these</div>}
+      <div className="ph-starters" role="group" aria-label="Start with one of these">
+        {starters.map((s, i) => (
+          <button key={s.title} type="button" className="set-li ph-st" onClick={() => onStarter(i)}>
+            <span className="set-li-l"><b>{s.title}</b><span className="ph-detail">{s.detail}</span></span><span className="set-ch" aria-hidden="true">›</span>
+          </button>
+        ))}
+      </div>
+      {signedOut && <p className="det wrap ph-price">25¢ free to start, $1 with GitHub. Plans from $20 a month. <a href="/pricing">Pricing</a></p>}
+    </div>
+    <div className="dock ph-dock"><div className="home-composer ph-composer">{composer}{below}</div></div>
+  </>)
+}

@@ -166,6 +166,14 @@ export function startMock({ port = 8788, fixture = new URL("./demo.jsonl", impor
       if (v.op === "submit" || v.op === "continue") {
         const input = v.op === "submit" ? (typeof v.text === "string" ? v.text : "") : typeof v.note === "string" ? v.note : "<resumed after the app restarted; your previous turn was interrupted; continue>";
         const a = account_.accounts(s.info.account).account;
+        // Local addition (plans): a plan inside its allowance pays for the turn; past it, credit does.
+        const plan = a.subscription && !a.subscription.over ? a.subscription : null;
+        if (plan) {
+          for (const w of plan.windows) w.used += MOCK_TURN_CENTS * 1e4;
+          plan.over = plan.windows.some((w) => w.used >= w.limit);
+          void s.booted.then((ok) => ok && s.rec.play(input, delayMs, { autoAllow }));
+          return;
+        }
         const stop = a.credit_cents >= MOCK_TURN_CENTS ? undefined : { after: a.credit_cents > 0 ? "i2" : null, reason: { type: "billing_limit", window: "credit", reason: "out of credit" }, usage: a.credit_cents > 0 ? { ...STOPPED_USAGE } : undefined };
         a.credit_cents = stop ? Math.min(0, a.credit_cents - MOCK_TURN_CENTS) : a.credit_cents - MOCK_TURN_CENTS;
         // Local addition (slow starts): the engine sees it once the boot is done; a failed boot drops it.

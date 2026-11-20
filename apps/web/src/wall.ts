@@ -112,12 +112,13 @@ export function cardFeeCents(dollars: number): number {
 
 // ---------- resuming ----------
 
-const NOTE = /^<resumed after (?:\$(\d+\.\d\d) of )?Frog Cloud credit was added; [^>]*; continue where you left off>$/
+const NOTE = /^<resumed after (?:\$(\d+\.\d\d) of )?(Frog Cloud credit was added|a Frog Cloud plan started); [^>]*; continue where you left off>$/
 
 /** What Op::Continue tells the model when credit was added: its own note, so the model knows
  *  why it stopped. The transcript shows it as one line (resumedLine), not a message. Without an
  *  amount (resumed by hand, the amount unknown) it says credit was added. */
-export function resumeNote(addedCents?: number): string {
+export function resumeNote(addedCents?: number, plan = false): string {
+  if (plan) return '<resumed after a Frog Cloud plan started; your previous turn stopped when credit ran out, between steps; continue where you left off>'
   const amount = addedCents && addedCents > 0 ? `$${(addedCents / 100).toFixed(2)} of ` : ''
   return `<resumed after ${amount}Frog Cloud credit was added; your previous turn stopped when credit ran out, between steps; continue where you left off>`
 }
@@ -126,6 +127,7 @@ export function resumeNote(addedCents?: number): string {
 export function resumedLine(input: string): string | null {
   const m = input.match(NOTE)
   if (!m) return null
+  if (m[2].startsWith('a Frog Cloud plan')) return 'Plan started. Frog picked up where it stopped.'
   return m[1] ? `$${m[1]} added. Frog picked up where it stopped.` : 'Credit added. Frog picked up where it stopped.'
 }
 
@@ -141,7 +143,7 @@ export function stoppedTurn(t: Thread): number | null {
 
 /** A top-up left for Stripe from the wall: Checkout comes back to the bare origin, so this is
  *  how the page knows which session to open and resume. */
-export interface PendingTopUp { session: string; turn: number; cents: number; before: number; at: number }
+export interface PendingTopUp { session: string; turn: number; cents: number; before: number; at: number; /** A plan, not credit: reopen the session, no polling for credit. */ plan?: true }
 
 const PENDING_KEY = 'frog.wallTopUp'
 /** A Checkout older than this isn't the one this page is coming back from. */

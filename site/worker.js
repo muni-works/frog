@@ -106,6 +106,8 @@ export default {
     // A settings section's URL (/settings/<section>, and for Skills and Connections their add page,
     // a skill or a result) is the app's Settings mode, likewise.
     if (/^\/settings(\/[\w-]*(\/[\w.%-]+(\/[\w.%-]+)?)?)?\/?$/.test(pathname) && env.ASSETS) return env.ASSETS.fetch(new URL("/", request.url));
+    // The plan sheet's URL (/pay) is the app, which opens the sheet (signed out, through sign-in and back).
+    if (/^\/pay\/?$/.test(pathname) && env.ASSETS) return env.ASSETS.fetch(new URL("/", request.url));
     // An old Customize link (/customize/...) likewise: the app sends it on to its Settings page.
     if (/^\/customize(\/[\w-]+(\/[\w.%-]+(\/[\w.%-]+)?)?)?\/?$/.test(pathname) && env.ASSETS) return env.ASSETS.fetch(new URL("/", request.url));
     return new Response("not found\n", { status: 404, headers: { "Content-Type": "text/plain" } });

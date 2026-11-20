@@ -1,0 +1,224 @@
+/* "Frog on a phone": the sheet, the plan sheet, the meter, and the phone's own layout under the
+   app's 760 px breakpoint. Desktop rules here are only the meter (at the ring's size) and the
+   sheet as a centred card. Tokens only: the frames' hex values are the dark theme's. */
+
+/* ---- the meter: a small bar with words, where the ring was ---- */
+.cz-meter { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font: 12px/16px var(--font-sans); font-variant-numeric: tabular-nums; white-space: nowrap; cursor: pointer; flex: none; }
+.cz-meter:hover { background: var(--hover); color: var(--fg); }
+.cz-meter:focus-visible { outline: 2px solid var(--frog); outline-offset: 2px; }
+.cz-meter-bar { display: block; width: 22px; height: 4px; border-radius: 2px; background: var(--well); overflow: hidden; flex: none; }
+.cz-meter-bar > b { display: block; height: 100%; border-radius: 2px; background: var(--frog); transition: width .4s; }
+.cz-meter.notice .cz-meter-bar > b { background: var(--notice); }
+.cz-meter.warn { color: var(--warn); }
+.cz-meter.warn .cz-meter-bar > b { background: var(--warn); }
+.cz-meter-label { display: block; }
+
+/* ---- the sheet ---- */
+.sheet-layer { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; padding: 16px; }
+.sheet-scrim { position: absolute; inset: 0; background: rgba(0, 0, 0, .45); animation: sheet-fade .18s ease-out; }
+.sheet { position: relative; width: 100%; max-width: 420px; max-height: calc(100dvh - 32px); display: flex; flex-direction: column; background: var(--card); border-radius: var(--radius-panel); box-shadow: var(--shadow-float); outline: none; color: var(--fg); animation: sheet-pop .18s ease-out; }
+.sheet-grab { display: none; }
+.sheet-body { overflow-y: auto; overscroll-behavior: contain; padding: 20px; display: flex; flex-direction: column; gap: 10px; }
+@keyframes sheet-fade { from { opacity: 0; } }
+@keyframes sheet-pop { from { opacity: 0; transform: translateY(8px); } }
+@keyframes sheet-rise { from { transform: translateY(100%); } }
+
+/* ---- the plan sheet ---- */
+.ps-title { margin: 0; font-size: 22px; line-height: 28px; font-weight: 600; letter-spacing: -0.01em; }
+.ps-lead { margin: 0 0 4px; font-size: 14px; line-height: 21px; }
+.ps-plans { display: flex; flex-direction: column; gap: 8px; }
+.ps-plan { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 56px; padding: 10px 14px; border: 0; border-radius: 14px; background: var(--hover); color: var(--fg); text-align: left; font: inherit; cursor: pointer; }
+.ps-plan.on { background: var(--frog-pad); }
+.ps-plan:focus-visible { outline: 2px solid var(--frog); outline-offset: 2px; }
+.ps-l { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.ps-l b { font-weight: 600; font-size: 15px; line-height: 21px; }
+.ps-l span { color: var(--muted); font-size: 13px; line-height: 18px; }
+.ps-p { font-weight: 600; font-size: 15px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ps-p span { font-weight: 400; color: var(--muted); font-size: 13px; }
+.ps-go { justify-content: center; min-height: 46px; font-size: 15px; margin-top: 6px; }
+.ps-credit { margin: 2px 0 0; text-align: center; font-size: 13px; line-height: 19px; }
+.ps-link { border: 0; background: none; padding: 0; font: inherit; color: var(--fg); text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px; cursor: pointer; }
+.ps-foot { margin: 8px 0 0; text-align: center; font-size: 12.5px; line-height: 18px; color: var(--faint); }
+.ps-win { display: flex; flex-direction: column; gap: 6px; padding: 4px 0; }
+.ps-win-h { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; font-size: 14px; }
+.ps-win-h b { font-weight: 600; }
+.ps-win .ctx-bar { height: 6px; border-radius: 3px; }
+.ps-row { display: flex; justify-content: space-between; font-size: 14px; padding: 6px 0; }
+.ps-ctx { margin-top: 8px; padding-top: 12px; border-top: 1px solid var(--line); }
+.ps-compact { align-self: flex-start; }
+
+/* ---- the once-only card after a first result (frame 6) ---- */
+.first-card { display: flex; flex-direction: column; gap: 10px; }
+.first-card .acts { display: flex; gap: 8px; }
+
+/* ---- phones ---- */
+@media (max-width: 760px) {
+  .sheet-layer { align-items: flex-end; padding: 0; }
+  .sheet { max-width: none; max-height: calc(var(--vvh, 100dvh) - 48px); border-radius: 26px 26px 0 0; animation: sheet-rise .22s cubic-bezier(.2, .8, .2, 1); transition: transform .18s ease-out; }
+  .sheet--tall { height: calc(var(--vvh, 100dvh) - 72px); }
+  /* The handle zone: the grab bar and the sheet's head take a swipe down (ui/Sheet.tsx). */
+  .sheet-grab { display: flex; justify-content: center; padding: 10px 0 12px; flex: none; touch-action: none; cursor: grab; }
+  .sheet .sheet-head { touch-action: none; }
+  .sheet-grab i { display: block; width: 36px; height: 5px; border-radius: 3px; background: var(--line-strong); }
+  .sheet-body { padding: 4px 16px max(16px, env(safe-area-inset-bottom)); }
+  .ps-go { min-height: 48px; font-size: 16px; }
+  .first-card .acts > * { flex: 1; justify-content: center; min-height: 44px; }
+}
+@media (prefers-reduced-motion: reduce) { .sheet, .sheet-scrim { animation: none; } }
+
+/* ---- the phone's header (frame 3) ---- */
+.phone-top { display: none; }
+@media (max-width: 760px) {
+  .titlebar.phone-top { display: flex; height: 52px; padding: 0 6px 0 8px; gap: 4px; }
+  .phone-title { display: flex; align-items: center; gap: 8px; min-width: 0; height: 44px; padding: 0 6px; border: 0; border-radius: 10px; background: transparent; color: var(--fg); font: 600 16px/22px var(--font-sans); cursor: pointer; }
+  .phone-title .title-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+  .phone-title .title-chev { flex: none; color: var(--faint); }
+  .phone-title:active { background: var(--hover); }
+  .phone-ib { margin-left: auto; flex: none; width: 44px; height: 44px; display: grid; place-items: center; border: 0; border-radius: 10px; background: transparent; color: var(--muted); cursor: pointer; }
+  .phone-ib:active { background: var(--hover); }
+  .phone-ib.phone-back { margin-left: 0; color: var(--fg); }
+  .phone-signin { margin-left: auto; flex: none; min-height: 44px; padding: 0 18px; font-size: 15px; }
+  .phone-top .title-edit { flex: 1; font-size: 16px; height: 40px; }
+  /* Standalone (Add to Home Screen): clear the notch and the home indicator. */
+  .win { padding-top: env(safe-area-inset-top); padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); box-sizing: border-box; }
+  /* The window follows the on-screen keyboard (ui/phone.ts useVisualViewport): the composer stays
+     above it and the transcript scrolls under the header. */
+  .win { position: fixed; left: 0; right: 0; top: var(--vvtop, 0px); height: var(--vvh, 100dvh); }
+  /* The drawer is only Documentation's now; shut, it's out of reach of focus and taps too. */
+  .win:not(.drawer) > .side { visibility: hidden; }
+}
+
+/* ---- the sessions sheet (frame 4) ---- */
+.ss-acct { display: flex; align-items: center; gap: 12px; min-height: 60px; }
+.ss-av { width: 36px; height: 36px; border-radius: 50%; flex: none; display: grid; place-items: center; background: var(--well); color: var(--muted); font-weight: 600; object-fit: cover; }
+.ss-who { flex: 1; min-width: 0; min-height: 44px; display: flex; flex-direction: column; justify-content: center; border: 0; background: none; padding: 0; text-align: left; color: var(--fg); font: inherit; cursor: pointer; }
+span.ss-who { cursor: default; }
+.ss-who b { font-size: 15px; line-height: 21px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ss-who span { font-size: 13px; line-height: 18px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ss-get { flex: none; min-height: 44px; padding: 0 16px; font-size: 14px; }
+.ss-two { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 6px 0 2px; }
+.ss-two .f-btn, .ss-acts .f-btn { justify-content: center; min-height: 44px; font-size: 15px; font-weight: 400; }
+.ss-gl { font-size: 12.5px; line-height: 18px; font-weight: 600; color: var(--muted); margin: 14px 4px 2px; }
+.ss-group { display: flex; flex-direction: column; }
+.ss-item { position: relative; }
+.ss-item + .ss-item { border-top: 1px solid var(--edge); }
+.ss-row { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 52px; padding: 6px 4px; border: 0; background: none; color: var(--fg); font: inherit; text-align: left; cursor: pointer; border-radius: 10px; }
+.ss-row:active { background: var(--hover); }
+.ss-item.on .ss-row { padding-right: 48px; }
+.ss-l { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.ss-l b { font-weight: 400; font-size: 15px; line-height: 22px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ss-item.on .ss-l b { font-weight: 600; }
+.ss-l span { font-size: 13px; line-height: 18px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ss-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--notice); flex: none; }
+.ss-more { position: absolute; right: 0; top: 4px; width: 44px; height: 44px; display: grid; place-items: center; border: 0; border-radius: 10px; background: transparent; color: var(--muted); cursor: pointer; }
+.ss-acts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 2px 0 12px; }
+.ss-del { color: var(--warn); }
+.ss-none { margin: 14px 4px; }
+.ss-foot { margin-top: auto; padding-top: 10px; }
+.ss-foot .ss-row + .ss-row { border-top: 1px solid var(--edge); }
+.ss-ch { color: var(--faint); font-size: 18px; }
+.sheet--tall .sheet-body { flex: 1; }
+
+/* ---- touch: no keyboard hints, every control in a 44 px tap area ---- */
+@media (hover: none) and (pointer: coarse) {
+  .kb, .cz-tab { display: none !important; }
+}
+@media (max-width: 760px) {
+  .cz-chip, .cz-act, .cz-signin, .cz-meter { position: relative; }
+  .cz-chip::after, .cz-act::after, .cz-signin::after, .cz-meter::after { content: ''; position: absolute; inset: -10px -4px; }
+}
+
+/* ---- Settings on a phone (frames 7, 8) ---- */
+.set-li { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 52px; padding: 6px 4px; border: 0; background: none; color: var(--fg); font: inherit; text-align: left; cursor: pointer; }
+.set-li + .set-li { border-top: 1px solid var(--edge); }
+.set-li:active { background: var(--hover); }
+.set-li--acct { min-height: 64px; }
+.set-li-l { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.set-li-l b { font-weight: 400; font-size: 15px; line-height: 22px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.set-li--acct .set-li-l b { font-weight: 600; }
+.set-li-l span { font-size: 13px; line-height: 18px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.set-li-v { color: var(--muted); font-size: 14px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.set-ch { color: var(--faint); font-size: 18px; width: 12px; text-align: center; flex: none; }
+.set-list { gap: 0; padding-bottom: 32px; }
+.set-list [role=group] { display: flex; flex-direction: column; }
+.phone-crumb { font-weight: 600; font-size: 16px; }
+.set-disclose { border-top: 1px solid var(--edge); }
+.set-disclose + .set-disclose { border-top: 1px solid var(--edge); }
+.set-disclose-body { padding: 2px 4px 14px; display: flex; flex-direction: column; }
+.hist-row { display: flex; align-items: center; min-height: 48px; padding: 6px 0; }
+.hist-row + .hist-row { border-top: 1px solid var(--edge); }
+.hist-l { display: flex; flex-direction: column; font-variant-numeric: tabular-nums; }
+.hist-l b { font-weight: 600; font-size: 15px; }
+.bill-phone { gap: 10px; }
+.bill-bar { height: 6px; border-radius: 3px; }
+.topup--phone .topup-amts { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+.topup--phone .topup-amts button { height: 44px; padding: 0; border-radius: 12px; font-weight: 400; font-variant-numeric: tabular-nums; }
+.topup--phone .topup-amts button.on { font-weight: 600; }
+.topup--phone .f-btn { min-height: 44px; font-size: 15px; }
+@media (max-width: 760px) {
+  .settings-main .titlebar { height: 52px; padding: 0 12px 0 4px; gap: 4px; }
+  .settings-main .crumbs { font-size: 16px; }
+  .settings-main .crumbs b { font-weight: 600; }
+  .settings-main .col { padding: 0 16px; box-sizing: border-box; }
+  .settings-page .set-row .f-btn, .settings-page .coupon .f-btn { min-height: 44px; }
+  .settings-page .f-field, .coupon .f-field { font-size: 16px; min-height: 44px; }
+  .settings-page .set-seg button { min-height: 44px; }
+}
+
+/* ---- home on a phone (frames 1, 2) ---- */
+.ph-body, .ph-dock { display: none; }
+@media (max-width: 760px) {
+  .main.phone-home, .main > .ph-body { position: relative; }
+  .main.phone-home { display: flex; flex-direction: column; padding-top: 0; }
+  .ph-body { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; justify-content: flex-end; padding: 0 16px 6px; }
+  .ph-body > :first-child { margin-top: auto; }
+  .main .ph-h, .main.home .ph-h { margin: 0; font-size: 26px; line-height: 32px; font-weight: 600; letter-spacing: -0.01em; text-align: left; }
+  .ph-lead { margin: 8px 0 10px; font-size: 15px; line-height: 22px; }
+  .ph-body .ss-gl { margin-top: 18px; }
+  .ph-starters { display: flex; flex-direction: column; }
+  .set-li-l .ph-detail { white-space: pre; }
+  .ph-price { margin: 14px 4px 4px; font-size: 13px; line-height: 19px; }
+  .ph-price a { color: var(--muted); text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px; display: inline-block; min-height: 24px; }
+  .ph-dock { display: block; flex: none; }
+  .ph-dock > .ph-composer { width: auto; }
+  .ph-composer .cz-menu { top: auto; bottom: calc(100% - 4px); }
+}
+@media (max-width: 760px) {
+  /* The field is a 44 px target too. */
+  .cz-card textarea { min-height: 44px; }
+}
+
+/* ---- the rest of the pass ---- */
+@media (max-width: 760px) {
+  /* Under a message: its actions show, no hover needed. */
+  .hover-row { opacity: 1; }
+  /* The inspector (preview, changes, terminal) is a full-screen sheet over the conversation. */
+  .insp { inset: 0 !important; z-index: 45; padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
+  .insp .insp-x { width: 44px; height: 44px; }
+}
+/* Touch: a tool row's actions (copy the command, show the change) are always there. */
+@media (hover: none) {
+  .tx .line-acts { position: static; transform: none; opacity: 1; pointer-events: auto; margin-left: 4px; }
+  .tx .line-plate:has(.line-acts) .line-result { visibility: visible; }
+}
+@media (max-width: 760px) {
+  /* Every button a 44 px target on a phone (the transcript's cards, the wall, Settings). */
+  .f-btn { min-height: 44px; }
+  .settings-main .set-menu, .settings-main select { min-height: 44px; font-size: 16px; }
+  .cust-explain > a { display: inline-flex; align-items: center; min-height: 44px; }
+  .cust-pill { min-height: 44px; }
+  .docs-main .burger { width: 44px; height: 44px; }
+}
+@media (max-width: 760px) {
+  /* The transcript on a phone: a step's row is a 44 px target (taller than frame 3 draws it), and
+     the small icon buttons under messages and on rows take taps in a 44 px area around them. */
+  .tx .line-plate { min-height: 44px; }
+  .tx button.line { min-height: 44px; }
+  .icon-plate { position: relative; }
+  .icon-plate::after { content: ''; position: absolute; inset: -10px -4px; }
+}
+@media (max-width: 760px) {
+  /* A turn's stats line keeps its words: the timeline graph goes under it when there's no room. */
+  .tx .turn-foot { flex-wrap: wrap; row-gap: 4px; }
+  .tx .turn-foot > .turn-line { flex-shrink: 0; max-width: 100%; }
+}
