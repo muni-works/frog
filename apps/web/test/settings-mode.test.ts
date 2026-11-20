@@ -50,6 +50,8 @@ async function signedIn(path: string, a: Acct = fresh(), globals?: Record<string
       if (u === "/v1/billing/history") return { body: { topups: a.history } };
       if (u === "/v1/coupons/redeem") return redeem(a, body.code);
       if (u === "/v1/billing/subscribe" || u === "/v1/billing/topup" || u === "/v1/billing/portal") return { body: { url: "https://checkout.stripe.test/x" } };
+      // zest#213: the plan changes in place; /v1/me answers with the new one after.
+      if (u === "/v1/billing/plan") { const sub = a.account.subscription as { plan: string; name: string } | null; if (sub) { sub.plan = body.plan; sub.name = body.plan === "max5" ? "Max" : body.plan === "max" ? "Ultra" : "Pro"; } return { body: { plan: body.plan, status: "active" } }; }
       if (u === "/v1/auth/link") return { body: { link: "l_1" } };
       return undefined;
     },
@@ -241,13 +243,29 @@ test("Billing: plans, top-up, credit, history and the per-model prices", async (
   q.unmount();
 });
 
-test("Billing with a plan: its windows and Change or cancel your plan (the portal)", async () => {
+test("Billing with a plan: its windows, the three plans, and a quiet Cancel plan (the portal)", async () => {
   const sub = { plan: "pro", name: "Pro", over: false, windows: [{ kind: "5h", used: 1, limit: 4, resets_at: "2026-11-18T05:00:00Z" }, { kind: "weekly", used: 2, limit: 4, resets_at: "2026-11-22T00:00:00Z" }] };
   const p = await signedIn("/settings/billing", fresh({ subscription: sub }));
   assert.match(shownText(page(p)!), /Pro Included allowance This 5 hours 25 %, .*This week 50 %/);
-  await click(btn(p, "Change or cancel your plan"));
+  assert.match(shownText(page(p)!), /Your plan/);
+  // Cancelling is still a person's click away, and still Stripe's portal.
+  await click(btn(p, "Cancel plan"));
   await settle();
   assert.equal(calls(p, "/v1/billing/portal").length, 1);
+  assert.equal(calls(p, "/v1/billing/plan").length, 0, "cancel never changes the plan");
+  p.unmount();
+});
+
+test("Billing with a plan: Upgrade to Max changes the plan in place (POST /v1/billing/plan), no Checkout", async () => {
+  const sub = { plan: "pro", name: "Pro", over: false, windows: [{ kind: "5h", used: 1, limit: 4, resets_at: "2026-11-18T05:00:00Z" }, { kind: "weekly", used: 2, limit: 4, resets_at: "2026-11-22T00:00:00Z" }] };
+  const p = await signedIn("/settings/billing", fresh({ subscription: sub }));
+  await click(btn(p, "Upgrade to Max"));
+  await settle();
+  const change = calls(p, "/v1/billing/plan");
+  assert.equal(change.length, 1);
+  assert.deepEqual(JSON.parse(change[0].body ?? "{}"), { plan: "max5" });
+  assert.equal(calls(p, "/v1/billing/subscribe").length, 0, "never a second subscription");
+  assert.equal(calls(p, "/v1/billing/portal").length, 0);
   p.unmount();
 });
 

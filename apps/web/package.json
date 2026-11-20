@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "mock": "node test/mock/mock-gateway.mjs",
     "check": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p test/tsconfig.json",
-    "test": "node --import tsx --test test/*.test.ts"
+    "test": "node --import tsx --test --test-timeout=60000 --test-force-exit test/*.test.ts"
   },
   "dependencies": {
     "react": "^18.3.1",
