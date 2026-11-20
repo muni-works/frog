@@ -22,7 +22,7 @@ the gateway (in its own repository) does all of this. None of it can be checked 
 
 1. **Forwards these ops to the engine unchanged, unknown fields included:** `set_client_caps`
    (`customize`, `notes`), `settings` (`values` and `client`), `submit`'s `typed`, `client` and
-   each `more` part's `typed`, `detach`, and `permission`'s `choice`. And delivers
+   each `more` part's `typed`, `act`'s `client`, `detach`, and `permission`'s `choice`. And delivers
    `setting_change` to the apps with its `client`. A gateway that rebuilds ops from known
    fields drops these, and the features turn off (caps), plan nothing (`client`), or let any
    app's text count as typed if it sets `typed` itself.
