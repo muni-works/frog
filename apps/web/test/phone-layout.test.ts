@@ -233,3 +233,110 @@ for (const w of [360, 375]) {
     });
   }
 }
+
+// ---------- plan accounts: Billing fits, every plan's buttons, stale, 80%, the wall ----------
+// Prices as long as the live ones ("$0.0066"), which clipped Billing's table on a phone.
+const LONG_PRICES = [
+  { id: "deepseek-v4.1-flash", context_length: 131072, pricing: { prompt: "0.00000033", completion: "0.00000132", input_cache_read: "0.0000000066" } },
+  { id: "glm-5.3-flash", context_length: 131072, pricing: { prompt: "0.0000000439", completion: "0.0000000862", input_cache_read: "0.000000033" } },
+  { id: "qwen3-coder-next", context_length: 262144, pricing: { prompt: "0.0002", completion: "0.002" } },
+];
+const planAcct = (plan: string, weekly: number, extra: Record<string, unknown> = {}) => ({ credit_cents: 500, history: [{ kind: "topup", at: "2026-11-02T18:00:00Z", amount_micro_usd: 5_000_000, status: "succeeded" }], plan, weekly, stale: false, ...extra });
+const rows = (p: Page) => p.eval<string[]>("[...document.querySelectorAll('.ps-row-plan')].map((r) => r.querySelector('b').textContent + ': ' + (r.querySelector('button, .ps-yours')?.textContent ?? ''))");
+
+for (const w of [360, 390]) {
+  test(`phone ${w}: Billing on a plan fits, long prices and all, with the three plans and a quiet Cancel plan`, { skip }, async () => {
+    await r.call("frog_models", "/v1/mock/models", { data: LONG_PRICES });
+    const key = `frog_bill_plan_${w}`;
+    await r.call(key, "/v1/mock/account", planAcct("pro", 0.12));
+    const p = await r.phone("/settings/billing", w, w === 360 ? 780 : 844, key);
+    try {
+      assert.ok(await has(p, ".ps-row-plan"));
+      await until(() => p.eval<boolean>("!!document.querySelector('.price-row')"));
+      await pause(400);
+      assert.deepEqual(await rows(p), ["Pro: Your plan", "Max: Upgrade to Max", "Ultra: Upgrade to Ultra"]);
+      assert.ok(await p.eval<boolean>("[...document.querySelectorAll('.bill-cancel')].some((b) => b.textContent === 'Cancel plan')"));
+      assert.equal(await p.eval<boolean>("document.body.textContent.includes('at once')"), false, "no concurrency in Billing");
+      holds(await audit(p), "Billing on a plan");
+    } finally { await p.close(); await r.call("frog_models", "/v1/mock/models", { data: null }); }
+  });
+}
+
+test("phone 390: each plan's sheet marks its own and offers the others", { skip }, async () => {
+  const want: Record<string, string[]> = {
+    pro: ["Pro: Your plan", "Max: Upgrade to Max", "Ultra: Upgrade to Ultra"],
+    max5: ["Pro: Switch to Pro", "Max: Your plan", "Ultra: Upgrade to Ultra"],
+    max: ["Pro: Switch to Pro", "Max: Switch to Max", "Ultra: Your plan"],
+  };
+  for (const plan of Object.keys(want)) {
+    const key = `frog_sheet_${plan}`;
+    await r.call(key, "/v1/mock/account", planAcct(plan, 0.12));
+    const p = await r.phone("/", 390, 844, key);
+    try {
+      await until(async () => (await text(p, ".cz-meter-label")) === "12% of week");
+      await tap(p, ".cz-meter");
+      assert.ok(await has(p, ".plan-sheet .ps-row-plan"));
+      assert.deepEqual(await rows(p), want[plan], plan);
+      assert.equal(await p.eval<boolean>("!!document.querySelector('.ps-up')"), false, "at 12% nothing leads");
+      holds(await audit(p), `plan sheet, ${plan}`);
+    } finally { await p.close(); }
+  }
+});
+
+test("phone 390: a stale plan says so in plain muted words, with every plan below to set one up", { skip }, async () => {
+  const key = "frog_stale";
+  await r.call(key, "/v1/mock/account", planAcct("pro", 0.12, { stale: true }));
+  const p = await r.phone("/settings/billing", 390, 844, key);
+  try {
+    assert.ok(await has(p, ".bill-cancel"));
+    await pause(400);
+    await tap(p, ".bill-cancel");
+    assert.ok(await has(p, ".bill-note"));
+    assert.equal(await text(p, ".bill-note"), "This plan can't be managed from here. Choose a plan below to set it up again.");
+    assert.equal(await p.eval<string>("getComputedStyle(document.querySelector('.bill-note')).color"), await p.eval<string>("getComputedStyle(document.querySelector('.det')).color"), "muted, not orange");
+    assert.deepEqual(await rows(p), ["Pro: Set up Pro again", "Max: Upgrade to Max", "Ultra: Upgrade to Ultra"]);
+    holds(await audit(p), "stale plan");
+  } finally { await p.close(); }
+});
+
+test("phone 390: at 80% of the week, a quiet line and the sheet lead with the next plan up", { skip }, async () => {
+  const key = "frog_near";
+  await r.call(key, "/v1/mock/account", planAcct("pro", 0.1));
+  const id = await r.session(key, ["Add a README"]);
+  await r.call(key, "/v1/mock/account", { plan: "pro", weekly: 0.84 });
+  const p = await r.phone(`/s/${id}`, 390, 844, key);
+  try {
+    assert.ok(await has(p, ".credit-warn"));
+    assert.equal(await text(p, ".credit-warn-text"), "84% of this week used");
+    assert.equal(await text(p, ".credit-warn-add"), "Upgrade to Max");
+    await tap(p, ".credit-warn-add");
+    assert.ok(await has(p, ".ps-up"));
+    assert.match((await text(p, ".ps-up")) ?? "", /^Max gives you 5 times the weekly work\.Upgrade to Max$/);
+    holds(await audit(p), "80% of the week");
+  } finally { await p.close(); }
+});
+
+test("phone 390: past the plan at the wall, Upgrade to Max through the portal, and the turn resumes", { skip }, async () => {
+  const key = "frog_wall_plan";
+  await r.call(key, "/v1/mock/account", planAcct("pro", 0.3));
+  const id = await r.session(key, ["Add a README"]);
+  await r.call(key, "/v1/mock/account", { credit_cents: 2, over: true, portal_plan: "max5" });
+  await r.play(key, id, ["Now add tests"]);
+  const p = await r.phone(`/s/${id}`, 390, 844, key);
+  try {
+    assert.ok(await has(p, ".wall"));
+    await pause(500);
+    assert.match((await p.eval<string>("document.querySelector('.wall').textContent")) ?? "", /Max gives you 5 times the weekly work\./);
+    await p.eval("[...document.querySelectorAll('.wall button')].find((b) => b.textContent === 'See plans').click()");
+    assert.ok(await has(p, ".ps-up"), "the sheet leads with the next plan");
+    await pause(300);
+    await tap(p, ".ps-up .ps-go");
+    assert.ok(await until(async () => (await p.eval<string>("location.pathname")) === `/s/${id}`, 20000), "back from the portal on the session");
+    assert.ok(await until(() => p.eval<boolean>("[...document.querySelectorAll('.wall .det')].some((d) => d.textContent.includes('Your plan is on'))"), 20000), "the wall sees the new plan");
+    await p.eval("[...document.querySelectorAll('.wall button')].find((b) => b.textContent === 'Resume').click()");
+    assert.ok(await until(async () => !(await p.eval<boolean>("!!document.querySelector('.wall')")), 20000), "resumed");
+    await until(async () => (await text(p, ".cz-meter-label")) !== null);
+    const me = (await r.call(key, "/v1/me")) as { account: { subscription: { name: string } } };
+    assert.equal(me.account.subscription.name, "Max");
+  } finally { await p.close(); }
+});

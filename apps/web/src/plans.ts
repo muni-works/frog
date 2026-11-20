@@ -6,19 +6,19 @@
 // they aren't signed off yet.
 //
 // What the numbers are:
-// - A plan's weekly amount and how many run at once are the plans' facts (PLAN_FACTS).
+// - A plan is its price and its weekly amount of work (PLAN_FACTS), nothing else.
 // - "Tasks like this one" divides by what this session has cost so far, at list price
 //   (wall.ts sessionSpend): close to what was debited, not the ledger. Always said with "about",
 //   and left out when there's no finished turn or the cost is zero.
 import type { Account, CreditRow } from './auth'
 import { costLine, leftLine } from './wall'
 
-/** The three plans: price a month, dollars of work a week, how many sessions run at once. The ids
+/** The three plans: price a month and dollars of work a week. The ids
  *  are the edge's (auth.ts PLANS, POST /v1/billing/subscribe). */
 export const PLAN_FACTS = [
-  { id: 'pro', name: 'Pro', price: 20, weekly: 5, at: 2 },
-  { id: 'max5', name: 'Max', price: 100, weekly: 25, at: 4 },
-  { id: 'max', name: 'Ultra', price: 200, weekly: 50, at: 8 },
+  { id: 'pro', name: 'Pro', price: 20, weekly: 5 },
+  { id: 'max5', name: 'Max', price: 100, weekly: 25 },
+  { id: 'max', name: 'Ultra', price: 200, weekly: 50 },
 ] as const
 export type PlanFact = (typeof PLAN_FACTS)[number]
 
@@ -41,7 +41,7 @@ export const COPY = {
   sheetTitleOut: "You're out of credit",
   /** `n`: about how many more tasks like this one what's left buys; null leaves that out. */
   sheetLead: (n: number | null) => `${n != null && n >= 1 ? `About ${countWord(n)} more task${n === 1 ? '' : 's'} like this one. ` : ''}A plan gives you a weekly amount of work at the same prices.`,
-  planLine: (p: PlanFact) => `${usd(p.weekly)} of work every week, ${p.at} at once`,
+  planLine: (p: PlanFact) => `${usd(p.weekly)} of work every week`,
   planPrice: (p: PlanFact) => usd(p.price),
   planPer: 'a month',
   getPlan: (p: PlanFact) => `Get ${p.name}, ${usd(p.price)} a month`,
@@ -148,3 +148,55 @@ export function planCard(memo: PlanCardMemo | null, o: { free: boolean; session:
 /** The plan sheet's own URL: works signed out (through sign-in and back), linkable from anywhere. */
 export const PAY_PATH = '/pay'
 export const isPayPath = (path: string) => /^\/pay\/?$/.test(path)
+
+// ---------- changing plans ----------
+// A plan account sees all three plans: its own marked, the others one button each. The edge has
+// no plan-change endpoint (zest 7e5a270): a change goes through Stripe's billing portal, and only
+// a plan the edge calls stale (not in this Stripe mode) is set up again through subscribe, since
+// subscribing on top of a live plan would leave the old one billing too.
+
+/** The plan an account is on, from its subscription's id; null without one or an unknown id. */
+export function planOf(sub: { plan: string } | null | undefined): PlanFact | null {
+  return (sub && PLAN_FACTS.find((p) => p.id === sub.plan)) || null
+}
+
+/** The next plan up, or null at the top (or without a plan). */
+export function nextPlan(current: PlanFact | null): PlanFact | null {
+  if (!current) return null
+  const i = PLAN_FACTS.findIndex((p) => p.id === current.id)
+  return PLAN_FACTS[i + 1] ?? null
+}
+
+/** A plan row's button for an account on `current`: none on its own plan (unless stale), else
+ *  Upgrade to a bigger one or Switch to a smaller one. */
+export function planAction(current: PlanFact | null, p: PlanFact, stale = false): string | null {
+  if (current && p.id === current.id) return stale ? `Set up ${p.name} again` : null
+  if (!current) return COPY.getPlan(p)
+  return p.weekly > current.weekly ? `Upgrade to ${p.name}` : `Switch to ${p.name}`
+}
+
+/** "5 times", "twice": how much more weekly work `to` gives than `from`. */
+export function timesMore(from: PlanFact, to: PlanFact): string {
+  const n = Math.round(to.weekly / from.weekly)
+  return n === 2 ? 'twice' : `${n} times`
+}
+
+/** At 80% of the week, or past the plan: the moment to offer the next plan up. */
+export const NEAR_WEEK = 0.8
+export function nearLimit(sub: Account['subscription'] | null | undefined): boolean {
+  if (!sub) return false
+  const w = weekShare(sub)
+  return sub.over || (!!w && w.share >= NEAR_WEEK)
+}
+
+export const PLAN_COPY = {
+  yours: 'Your plan',
+  /** Leads the sheet and Billing at 80% of the week or past the plan. */
+  lead: (from: PlanFact, to: PlanFact) => `${to.name} gives you ${timesMore(from, to)} the weekly work.`,
+  /** Under the plans: where a change goes (the edge's only route today). */
+  via: 'Changing plan opens Stripe, where you confirm it.',
+  stale: "This plan can't be managed from here. Choose a plan below to set it up again.",
+  cancel: 'Cancel plan',
+  /** The quiet line under the composer at 80% of the week. */
+  near: (pct: number) => `${pct}% of this week used`,
+}

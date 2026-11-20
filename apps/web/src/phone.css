@@ -234,3 +234,31 @@ span.ss-who { cursor: default; }
   .cz-meter-bar { display: none; }
   .cz-meter { padding: 0 4px; }
 }
+
+/* ---- changing plans (the plan sheet and Billing, every width) ---- */
+.ps-up { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-radius: 14px; background: var(--frog-pad); }
+.ps-up b { font-weight: 600; font-size: 15px; line-height: 21px; }
+.ps-up .ps-go { margin-top: 0; }
+.ps-row-plan { cursor: default; flex-wrap: wrap; row-gap: 8px; box-sizing: border-box; }
+.ps-row-plan .ps-l { min-width: 150px; }
+.ps-act { flex: none; justify-content: center; }
+.ps-yours { flex: none; font-size: 13px; }
+.ps-via { margin: 0; font-size: 12.5px; }
+.bill-note { color: var(--muted); }
+.price-row { display: flex; flex-direction: column; gap: 2px; padding: 8px 0; }
+.price-row + .price-row { border-top: 1px solid var(--edge); }
+.price-row b { font-weight: 400; font-size: 14px; }
+.price-row .det { font-variant-numeric: tabular-nums; }
+.set-prices--phone { font-size: 13px; }
+@media (max-width: 760px) {
+  /* Billing on a phone fits with side margins: cards never wider than the column. */
+  .settings-page .bill-card { box-sizing: border-box; max-width: 100%; min-width: 0; }
+  .settings-page .allow-h { gap: 12px; }
+  .ps-act { min-height: 44px; }
+}
+.bill-over { color: var(--muted); background: none; padding: 0; } /* no orange pill: orange is only the needs-you dot */
+@media (max-width: 760px) {
+  /* The quiet lines under the composer: their buttons take taps in a 44 px area. */
+  .credit-warn-add { position: relative; }
+  .credit-warn-add::after { content: ''; position: absolute; inset: -14px -6px; }
+}

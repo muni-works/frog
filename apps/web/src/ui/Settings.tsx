@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
 import { notifyOn, notifySupported, setNotify } from '../alerts'
-import { billingHistory, billingPortal, createKey, CouponError, firstName, listKeys, PLANS, portalErrorMessage, redeemCoupon, revokeKey, TOP_UPS, type Account, type CreditRow, type KeyInfo, type Provider } from '../auth'
+import { AuthError, billingHistory, billingPortal, createKey, CouponError, firstName, listKeys, PLANS, portalErrorMessage, redeemCoupon, revokeKey, TOP_UPS, type Account, type CreditRow, type KeyInfo, type Provider } from '../auth'
 import { friendly } from '../cloud/client'
 import { canPull, catalogModel, displayName, memoryLine, runningLine, usesLine, type Machine } from '../machines'
 import type { Mode } from '../cloud/protocol'
@@ -9,7 +9,8 @@ import { savedDensity, savedTheme, SECTIONS, setDensity, WEB_SECTIONS, setTheme,
 import { InvitePill } from './DownloadChip'
 import { ICON, Icon } from './icons'
 import { creditLine, dollars } from './Overlays'
-import { COPY, PLAN_FACTS, type PlanFact } from '../plans'
+import { COPY, PLAN_COPY, PLAN_FACTS, type PlanFact } from '../plans'
+import { PlanLead, PlanList } from './PlanSheet'
 import { leftLine } from '../wall'
 import { useNarrow, useTouch } from './phone'
 import { accountLine } from './SessionsSheet'
@@ -121,6 +122,8 @@ export interface SettingsProps {
    *  Billing draws "19¢ of 25¢ left" (frame 8). */
   free?: boolean
   addedCents?: number | null
+  /** On a plan: change to another (Stripe's portal; subscribe when the edge calls the plan stale). */
+  onChangePlan?: (plan: string) => Promise<void>
 }
 
 /** One section. */
@@ -191,7 +194,7 @@ export const RENDER: Record<string, (row: SettingRow, p: Ctx) => ReactNode> = {
   profile: (_, p) => <Profile {...p} />,
   'sign-ins': (_, p) => <Logins account={p.account} onConnect={p.onConnect} />,
   devices: (_, p) => p.apiKey ? <Keys apiKey={p.apiKey} /> : null,
-  plan: (_, p) => <Subscription account={p.account} apiKey={p.apiKey} onSubscribe={p.onSubscribe} free={p.free} addedCents={p.addedCents} />,
+  plan: (_, p) => <Subscription account={p.account} apiKey={p.apiKey} onSubscribe={p.onSubscribe} onChangePlan={p.onChangePlan} free={p.free} addedCents={p.addedCents} />,
   credit: (_, p) => <Credit {...p} />,
   'credit-history': (_, p) => p.apiKey ? <History key={p.historyStamp} apiKey={p.apiKey} /> : null,
   prices: (_, p) => <Prices models={p.models ?? []} />,
@@ -431,7 +434,20 @@ function Credit({ account, apiKey, focusCoupon, onTopUp, onRedeemed }: SettingsP
 
 /** Prices per model, per million tokens. */
 function Prices({ models }: { models: Model[] }) {
+  const narrow = useNarrow()
   if (!models.length) return null
+  // A phone: each model a row with its three prices under it, nothing past the edge.
+  if (narrow) return (
+    <div className="set-prices set-prices--phone" aria-label="Prices per million tokens">
+      {models.map((m) => (
+        <div key={m.id} className="price-row">
+          <b>{modelName(m.id)}</b>
+          <span className="det">Input {perM(m.input)}<span className="gap"> </span>Cached {perM(m.cached)}<span className="gap"> </span>Output {perM(m.output)}</span>
+        </div>
+      ))}
+      <div className="det">Per million tokens.</div>
+    </div>
+  )
   return (
     <div className="set-prices">
       <div className="set-price-h"><span>Model</span><span>Input</span><span>Cached</span><span>Output</span></div>
@@ -446,9 +462,11 @@ function Prices({ models }: { models: Model[] }) {
 }
 
 /** The plan and its allowance, or (without one) the plans to pick from. */
-function Subscription({ account, apiKey, onSubscribe, free, addedCents }: { account: Account | null; apiKey?: string; onSubscribe?: (plan: string) => Promise<void>; free?: boolean; addedCents?: number | null }) {
+function Subscription({ account, apiKey, onSubscribe, onChangePlan, free, addedCents }: { account: Account | null; apiKey?: string; onSubscribe?: (plan: string) => Promise<void>; onChangePlan?: (plan: string) => Promise<void>; free?: boolean; addedCents?: number | null }) {
   const [busy, setBusy] = useState<string | null>(null)
   const [portalError, setPortalError] = useState<string | null>(null)
+  // The edge can't manage this plan (another Stripe mode): every plan row sets one up again.
+  const [stale, setStale] = useState(false)
   const narrow = useNarrow()
   const sub = account?.subscription
   if (!sub && narrow) return <PhonePlans account={account} onSubscribe={onSubscribe} free={!!free} addedCents={addedCents ?? null} />
@@ -464,12 +482,19 @@ function Subscription({ account, apiKey, onSubscribe, free, addedCents }: { acco
           </div>
         )
       })}
-      {apiKey && <button type="button" className="f-btn f-btn--plain f-btn--small" style={{ alignSelf: 'flex-start' }} disabled={busy === 'portal'}
+      <PlanLead sub={sub} onChangePlan={onChangePlan} />
+      <PlanList sub={sub} stale={stale} onChangePlan={stale ? onSubscribe : onChangePlan} />
+      {/* Cancelling stays a quiet link, apart from changing plans (Stripe's portal). */}
+      {apiKey && !stale && <button type="button" className="f-btn f-btn--plain f-btn--small bill-cancel" style={{ alignSelf: 'flex-start' }} disabled={busy === 'portal'}
         onClick={() => {
           setBusy('portal'); setPortalError(null)
-          billingPortal(apiKey).catch((e) => { setBusy(null); setPortalError(portalErrorMessage(e) ?? "couldn't open the billing portal — try again") })
-        }}>{busy === 'portal' ? 'Opening Stripe…' : 'Change or cancel your plan'}</button>}
-      {portalError && <div className="det wrap" style={{ color: 'var(--notice)' }}>{portalError}</div>}
+          billingPortal(apiKey).catch((e) => {
+            setBusy(null)
+            if (e instanceof AuthError && e.code === 'stale_subscription') setStale(true)
+            setPortalError(portalErrorMessage(e) ?? "Couldn't open Stripe. Try again.")
+          })
+        }}>{busy === 'portal' ? 'Opening Stripe…' : PLAN_COPY.cancel}</button>}
+      {portalError && <div className="det wrap bill-note">{portalError}</div>}
     </div>
   )
   return (

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAlerts } from './alerts'
-import { finishSignIn, firstName, me, savedKey, signIn, signOut, subscribe, topUp, AuthError, type Account, type Provider } from './auth'
+import { billingPortal, finishSignIn, firstName, me, savedKey, signIn, signOut, subscribe, topUp, AuthError, type Account, type Provider } from './auth'
 import { friendly, type ConnectionState } from './cloud/client'
 import type { SessionSummary } from './cloud/protocol'
 import type { Image, Mode } from './cloud/protocol'
@@ -42,10 +42,10 @@ import { docsPath, docsSlugOf } from './docs/docs'
 import { accountTag, connectCard, finishedTurn, loadMemo, saveMemo, type CardMemo } from './connectCard'
 import { ConnectCard } from './ui/ConnectCard'
 import { CreditWall } from './ui/CreditWall'
-import { CreditWarning, useCreditHistory } from './ui/CreditWarning'
+import { CreditWarning, PlanNear, useCreditHistory } from './ui/CreditWarning'
 import { useWallResume } from './ui/wallResume'
 import { averageTurn, sessionSpend } from './wall'
-import { firstResultWords, isPayPath, loadPlanCard, meter as meterOf, moreTasks, onFreeCredit, planCard, savePlanCard, FREE_CENTS, FREE_GITHUB_CENTS, type PlanCardMemo } from './plans'
+import { firstResultWords, isPayPath, loadPlanCard, meter as meterOf, moreTasks, nextPlan, onFreeCredit, PLAN_COPY, planCard, planOf, savePlanCard, FREE_CENTS, FREE_GITHUB_CENTS, type PlanCardMemo } from './plans'
 import { PlanSheet } from './ui/PlanSheet'
 import { FirstResultCard } from './ui/FirstResultCard'
 import { sheetOpen } from './ui/Sheet'
@@ -393,7 +393,10 @@ export default function App() {
   }, [ct?.running, ct?.turns.length, refreshAccount]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     const t = setInterval(() => { if (!document.hidden) refreshAccount() }, 20_000)
-    return () => clearInterval(t)
+    // Back on the tab (a plan changed in Stripe, the phone's app switcher): the plan and allowance at once.
+    const back = () => { if (!document.hidden) refreshAccount() }
+    document.addEventListener('visibilitychange', back)
+    return () => { clearInterval(t); document.removeEventListener('visibilitychange', back) }
   }, [refreshAccount])
   // The open session's own changes show in the list at once, not at the next poll.
   useEffect(() => { refreshSessions() }, [ct?.running, ct?.turns.length]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -812,6 +815,20 @@ export default function App() {
   const paused = ct ? outOfCredits(ct) : false
   // A plan inside its allowance pays for turns without credit (the wall's Resume).
   const planOn = !!account?.subscription && !account.subscription.over
+  // On a plan, the next one up and what it gives (the wall and the 80% line lead with it).
+  const myPlan = planOf(account?.subscription)
+  const upPlan = nextPlan(myPlan)
+  /** Change an existing plan: the edge's only route is Stripe's portal. A plan the edge calls
+   *  stale (made in another Stripe mode) is set up again through subscribe, as it asks; never on
+   *  top of a live plan, which would keep billing too. From the wall, the session is noted first. */
+  const changePlan = key && !DEV_KEY ? async (plan: string) => {
+    if (paused) wall.leaving(0, account?.credit_cents ?? 0, true)
+    try { await billingPortal(key) } catch (e) {
+      if (e instanceof AuthError && e.code === 'stale_subscription') return subscribe(key, plan).catch((err) => { if (paused) wall.stayed(); throw err })
+      if (paused) wall.stayed()
+      throw e
+    }
+  } : undefined
   const cs = current ? conn[current.id] : undefined
 
   return (
@@ -859,7 +876,7 @@ export default function App() {
         bar={narrow ? settingsBack : <><Burger />{collapsed && sideToggle(false)}</>} onOpen={(x) => openSettings(x)} free={free} addedCents={lastAdded ?? grant}
         onTopUp={!DEV_KEY ? (d) => topUp(key, d) : undefined} onSubscribe={!DEV_KEY ? (p) => subscribe(key, p) : undefined} onConnect={!DEV_KEY ? (p) => leave(null, p, key, false) : undefined}
         onSignOut={() => { if (!DEV_KEY) signOut(key); signedOut() }}
-        onRedeemed={(r) => { setAccount((a) => (a ? { ...a, credit_cents: r.credit_cents } : a)); refreshAccount() }} />),
+        onRedeemed={(r) => { setAccount((a) => (a ? { ...a, credit_cents: r.credit_cents } : a)); refreshAccount() }} onChangePlan={changePlan} />),
       threads: !key ? (
       // Signed out: the landing, in the shell. The composer's Sign in keeps what was typed and
       // sends it after the round trip.
@@ -970,7 +987,8 @@ export default function App() {
                 onRedeemed={(r) => { setAccount((a) => (a ? { ...a, credit_cents: r.credit_cents } : a)); refreshAccount(); wall.redeemed(r) }}
                 waiting={wall.waiting ? { text: wall.waiting, onResume: wall.resumeByHand(account?.credit_cents ?? 0) } : null}
                 credit={account?.credit_cents} creditAt={accountAt} onResume={wall.resumeByHand(account?.credit_cents ?? 0, planOn)}
-                onPlans={() => setPlans(true)} planOn={planOn} />
+                onPlans={!myPlan || upPlan ? () => setPlans(true) : undefined} planOn={planOn}
+                plansLine={myPlan && upPlan ? PLAN_COPY.lead(myPlan, upPlan) : undefined} />
             )}
           </div></div>
           <div className="dock">
@@ -995,6 +1013,7 @@ export default function App() {
                 ? setQueue((all) => ({ ...all, [current.id]: [...(all[current.id] ?? []), { text, images, ...(typed ? { typed } : {}) }] }))
                 : send(current.id, text, images, typed)) }} onStop={() => cloud?.send(current.id, { op: 'interrupt' })} onGit={() => push(current)} />}
             {!paused && <CreditWarning account={account} addedCents={lastAdded} avg={avgTurn} onAdd={() => openSettings('billing')} onPlans={() => setPlans(true)} />}
+            {!paused && <PlanNear account={account} onPlans={() => setPlans(true)} />}
           </div>
         </>)}
 
@@ -1029,7 +1048,7 @@ export default function App() {
           onDelete={current ? () => remove(current) : undefined} onInspector={current && ct ? () => setInspector(true) : undefined} />
       )}
       {plans && (
-        <PlanSheet account={account} loading={!!key && !account && !DEV_KEY} more={more} onClose={() => setPlans(false)}
+        <PlanSheet account={account} loading={!!key && !account && !DEV_KEY} more={more} onClose={() => setPlans(false)} onChangePlan={changePlan}
           onSubscribe={key && !DEV_KEY ? (plan) => {
             // From the wall: Checkout comes back to the bare origin, so note the session to return to.
             if (paused) wall.leaving(0, account?.credit_cents ?? 0, true)

@@ -63,7 +63,7 @@ test("plan sheet: about how many more tasks, only from a finished, priced sessio
   assert.equal(COPY.sheetLead(4), "About four more tasks like this one. A plan gives you a weekly amount of work at the same prices.");
   assert.equal(COPY.sheetLead(null), "A plan gives you a weekly amount of work at the same prices.");
   assert.equal(COPY.sheetLead(0), "A plan gives you a weekly amount of work at the same prices.");
-  assert.deepEqual(PLAN_FACTS.map((p) => COPY.planLine(p)), ["$5 of work every week, 2 at once", "$25 of work every week, 4 at once", "$50 of work every week, 8 at once"]);
+  assert.deepEqual(PLAN_FACTS.map((p) => COPY.planLine(p)), ["$5 of work every week", "$25 of work every week", "$50 of work every week"]);
   assert.equal(COPY.getPlan(PLAN_FACTS[0]), "Get Pro, $20 a month");
 });
 
@@ -101,4 +101,53 @@ test("/pay is the plan sheet's URL", () => {
   assert.equal(isPayPath("/pay"), true);
   assert.equal(isPayPath("/pay/"), true);
   assert.equal(isPayPath("/payment"), false);
+});
+
+import { nearLimit, nextPlan, PLAN_COPY, planAction, planOf, timesMore } from "../src/plans.ts";
+
+test("plans are a price and a weekly amount of work, nothing about how many run at once", () => {
+  for (const p of PLAN_FACTS) {
+    assert.doesNotMatch(COPY.planLine(p), /at once|concurren|parallel/i);
+    assert.doesNotMatch(COPY.getPlan(p), /at once|concurren|parallel/i);
+  }
+});
+
+test("on each plan: its own marked, bigger ones Upgrade, smaller ones Switch", () => {
+  const [pro, max, ultra] = PLAN_FACTS;
+  assert.deepEqual(PLAN_FACTS.map((p) => planAction(pro, p)), [null, "Upgrade to Max", "Upgrade to Ultra"]);
+  assert.deepEqual(PLAN_FACTS.map((p) => planAction(max, p)), ["Switch to Pro", null, "Upgrade to Ultra"]);
+  assert.deepEqual(PLAN_FACTS.map((p) => planAction(ultra, p)), ["Switch to Pro", "Switch to Max", null]);
+  // No plan: the free account's button.
+  assert.equal(planAction(null, max), "Get Max, $100 a month");
+  // Stale: every row sets one up again, its own too.
+  assert.deepEqual(PLAN_FACTS.map((p) => planAction(pro, p, true)), ["Set up Pro again", "Upgrade to Max", "Upgrade to Ultra"]);
+  assert.equal(PLAN_COPY.yours, "Your plan");
+});
+
+test("the next plan up and what it gives", () => {
+  const [pro, max, ultra] = PLAN_FACTS;
+  assert.equal(nextPlan(pro)?.name, "Max");
+  assert.equal(nextPlan(max)?.name, "Ultra");
+  assert.equal(nextPlan(ultra), null);
+  assert.equal(nextPlan(null), null);
+  assert.equal(timesMore(pro, max), "5 times");
+  assert.equal(timesMore(max, ultra), "twice");
+  assert.equal(PLAN_COPY.lead(pro, max), "Max gives you 5 times the weekly work.");
+  assert.equal(PLAN_COPY.lead(max, ultra), "Ultra gives you twice the weekly work.");
+  assert.equal(planOf({ plan: "max5" })?.name, "Max");
+  assert.equal(planOf({ plan: "nope" }), null);
+  assert.equal(planOf(null), null);
+});
+
+test("the moment to offer the next plan: 80% of the week, or past the plan", () => {
+  assert.equal(nearLimit(plan(79)), false);
+  assert.equal(nearLimit(plan(80)), true);
+  assert.equal(nearLimit(plan(30, 0, true)), true);
+  assert.equal(nearLimit(null), false);
+  assert.equal(PLAN_COPY.near(84), "84% of this week used");
+});
+
+test("a stale plan reads as a plain sentence with somewhere to go", () => {
+  assert.equal(PLAN_COPY.stale, "This plan can't be managed from here. Choose a plan below to set it up again.");
+  assert.doesNotMatch(PLAN_COPY.stale, /—/);
 });

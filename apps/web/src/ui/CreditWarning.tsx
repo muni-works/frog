@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { billingHistory, type Account, type CreditRow } from '../auth'
 import { aboutTurns, lastAddedCents, leftLine, lowCredit, turnsLine } from '../wall'
+import { NEAR_WEEK, nextPlan, PLAN_COPY, planAction, planOf, weekShare } from '../plans'
 
 /** Billing's credit history (null until it's in, or when it couldn't be read) and the newest
  *  credit added, once per key and credit change. */
@@ -34,8 +35,25 @@ export function CreditWarning({ account, addedCents, avg, onAdd, onPlans }: { ac
     <div className="credit-warn" role="status">
       <span className="credit-warn-dot" aria-hidden="true" />
       <span className="credit-warn-text">{leftLine(cents)} of credit left{n != null ? `, ${turnsLine(n)} at your average` : ''}</span>
-      {onPlans && !account!.subscription && <button type="button" className="credit-warn-add" onClick={onPlans}>See plans</button>}
+      {onPlans && (!account!.subscription || nextPlan(planOf(account!.subscription))) && <button type="button" className="credit-warn-add" onClick={onPlans}>{account!.subscription ? planAction(planOf(account!.subscription), nextPlan(planOf(account!.subscription))!) : 'See plans'}</button>}
       <button type="button" className="credit-warn-add" onClick={onAdd}>Add credit</button>
+    </div>
+  )
+}
+
+/** At 80% of the week on a plan with a bigger one above it: one quiet line under the composer,
+ *  "84% of this week used", and Upgrade to the next plan (the plan sheet). Never a modal. */
+export function PlanNear({ account, onPlans }: { account: Account | null; onPlans: () => void }) {
+  const sub = account?.subscription
+  const current = planOf(sub)
+  const next = nextPlan(current)
+  const w = sub ? weekShare(sub) : null
+  if (!sub || sub.over || !next || !w || w.share < NEAR_WEEK) return null
+  return (
+    <div className="credit-warn" role="status">
+      <span className="credit-warn-dot" aria-hidden="true" />
+      <span className="credit-warn-text">{PLAN_COPY.near(Math.min(100, Math.round(w.share * 100)))}</span>
+      <button type="button" className="credit-warn-add" onClick={onPlans}>{planAction(current, next)}</button>
     </div>
   )
 }

@@ -107,8 +107,8 @@ export async function finishSignIn(): Promise<{ key: string; account: Account; a
 /** Subscriptions: an allowance each, then usage pricing from credit past it. */
 export const PLANS = [
   { id: 'pro', name: 'Pro', price: 20, blurb: 'For steady daily use' },
-  { id: 'max5', name: 'Max', price: 100, blurb: '5× Pro, more at once' },
-  { id: 'max', name: 'Ultra', price: 200, blurb: '10× Pro, for heavy use' },
+  { id: 'max5', name: 'Max', price: 100, blurb: '5× Pro\'s weekly work' },
+  { id: 'max', name: 'Ultra', price: 200, blurb: '10× Pro\'s weekly work' },
 ] as const
 
 /** Leaves for Stripe Checkout to start a plan. */
@@ -170,7 +170,7 @@ export async function billingPortal(key: string) {
 export function portalErrorMessage(e: unknown): string | null {
   if (!(e instanceof AuthError)) return null
   switch (e.code) {
-    case 'stale_subscription': return "your plan isn't linked to Stripe — subscribe again below to manage it"
+    case 'stale_subscription': return "This plan can't be managed from here. Choose a plan below to set it up again."
     case 'no_subscription': return 'no plan to manage'
     case 'no_customer': return 'cancel and resubscribe to manage this plan'
     case 'invalid_key': return 'your session expired — sign in again'
