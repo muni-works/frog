@@ -11,7 +11,7 @@ import { moreLine, pickRepos, rankRepos } from '../repoRank'
 import type { Provider } from '../auth'
 import { safeHref } from './href'
 import { DownloadAppChip, useDownloadChip, usePhone } from './DownloadChip'
-import { hasThisMac, inviteFor, isMacVisitor, macHandoff } from './download'
+import { hasThisMac, inviteFor, isMacVisitor, macHandoff, openWithFallback, takeHandoffDraft } from './download'
 import { useFocusTrap, useLayer, useMenu } from './layers'
 import { useSuggestion, type Suggestion } from './suggestion'
 import { derive, error as reducerError, reduce, type ComposerError, type Effect, type Intent, type Pr, type State as Tray } from '../composer'
@@ -193,13 +193,14 @@ type MenuName = 'plus' | 'model' | 'mode' | 'repo' | 'branch' | 'signin'
 export const sentTyped = (field: string, untyped: string | null) => untyped === null || field.trim() !== untyped.trim()
 
 export function Composer(p: ComposerProps) {
-  const [text, setText] = useState(p.draft ?? '')
+  // Back from the download a hand-off fell through to (no Mac app answered): the draft it kept.
+  const [text, setText] = useState(() => p.draft ?? takeHandoffDraft() ?? '')
   const [menu, setMenu] = useState<MenuName | null>(p.pickRepo ? 'repo' : p.openModels ? 'model' : null)
   // Local models run from the Mac app: the menu lists them all the same, and picking one hands
   // off to the app (or to getting it), with one quiet download line after them.
   const machineChip = useDownloadChip(p.machines ?? [])
   const phone = usePhone()
-  const handoff = macHandoff(inviteFor({ mac: isMacVisitor(), thisMac: hasThisMac(p.machines ?? []) }))
+  const invite = inviteFor({ mac: isMacVisitor(), thisMac: hasThisMac(p.machines ?? []) })
   const [q, setQ] = useState('')
   // Where the open menu's chip sits, so the menu opens right above it.
   const [at, setAt] = useState<{ left?: number; right?: number }>({ left: 8 })
@@ -533,16 +534,26 @@ export function Composer(p: ComposerProps) {
             {/* The web runs sessions in Frog Cloud, so a local model can't run here: its row is
              * a link to Frog for Mac (or to getting it), never a cloud pick and never dead. */}
             {(local.length > 0 || !q.trim()) && <div className="cz-menu-h">Run it on your Mac</div>}
-            {local.map((m) => (
+            {local.map((m) => {
+              // A new session in Frog for Mac on this model, with what's typed here in its
+              // composer (`frog://new`); unsure the app is there, the download after a wait.
+              const handoff = macHandoff(invite, { model: m.key, prompt: text, repo: p.repo })
+              return (
               <a key={m.key} className="cz-row cz-local" role="menuitem" href={handoff.href} title={handoff.title}
                 aria-label={`${m.name}, runs on your Mac${m.on ? ` (${m.on})` : ''}, ${handoff.does}`}
-                onClick={() => { setMenu(null); setQ('') }}>
+                onClick={(e) => {
+                  setMenu(null); setQ('')
+                  if (!handoff.fallback) return
+                  e.preventDefault()
+                  openWithFallback(handoff.href, handoff.fallback, text)
+                }}>
                 <I d={P.laptop} style={{ color: placeColor('local') }} />
                 <span className="cz-mname">{m.name}</span>{m.on && <span className="cz-on">{m.on}</span>}
                 <span className="cz-r">$0 a token</span>
                 <I d={P.out} className="cz-out" />
               </a>
-            ))}
+              )
+            })}
             {!q.trim() && !hasThisMac(p.machines ?? []) && (machineChip
               ? <div className="cz-menu-note"><DownloadAppChip label="Runs from the Mac app" machines={p.machines} /></div>
               : phone && <div className="cz-menu-note">Runs from the Mac app. <a href="/mac">Get the Mac app</a></div>)}

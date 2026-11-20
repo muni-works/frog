@@ -1556,6 +1556,12 @@ final class Conversation {
         return nil
     }
 
+    /// A quiet line above the composer for a few seconds (`toast`), from the app: a
+    /// `frog://new` link whose model couldn't be used.
+    func notice(_ text: String) {
+        show(text)
+    }
+
     private func show(_ text: String) {
         toast = text
         toastTask?.cancel()

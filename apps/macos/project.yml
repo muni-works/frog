@@ -62,7 +62,8 @@ targets:
         SUPublicEDKey: $(SPARKLE_PUBLIC_KEY)
         LSApplicationCategoryType: public.app-category.developer-tools
         NSUserActivityTypes: [toys.frog.conversation]
-        # frog://settings/<section> opens Settings on that section (the web's "Open in Frog for Mac").
+        # frog://settings/<section> opens Settings on that section (the web's "Open in Frog for Mac");
+        # frog://new?model=&prompt=&repo= opens a new session with the message in its composer.
         # Debug builds answer frog-dev:// instead, so a stray build never takes the installed
         # app's links (the same reason they have their own bundle id, below).
         CFBundleURLTypes:
