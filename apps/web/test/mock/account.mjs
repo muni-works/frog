@@ -11,7 +11,8 @@
 //   POST /v1/mock/credit      {cents}: sets the balance (mock only, for the credit wall)
 //   POST /v1/billing/subscribe {plan, return} → {url: <return>/?session_id=cs_mock_…}: no Stripe;
 //                             the plan starts 1.5 s later, as the webhook's would
-//   POST /v1/mock/account     {credit_cents?, plan?, weekly?, fiveHour?, history?}: sets up a
+//   GET  /v1/repos            the account's GitHub repos (none unless /v1/mock/account set some)
+//   POST /v1/mock/account     {credit_cents?, plan?, weekly?, fiveHour?, history?, repos?}: sets up a
 //                             state (a fresh 25¢ account: {credit_cents: 25, history: []}; a plan:
 //                             {plan: "pro", weekly: 0.12}) (mock only, for the phone screenshots)
 // Mock data only: the prices and amounts here are not Frog Cloud's.
@@ -65,6 +66,7 @@ export function accountRoutes() {
         for (const k of a.keys) if (k.id === revoke[1]) k.revoked = true;
         return json(res, 200, { ok: true }), true;
       }
+      if (path === "/v1/repos" && req.method === "GET") return json(res, 200, { repos: (a.repos ?? []).map((name) => ({ name, pushed_at: null })) }), true;
       if (path === "/v1/billing/history" && req.method === "GET") return json(res, 200, { topups: a.history }), true;
       if (path === "/v1/billing/topup" && req.method === "POST") {
         const b = (await body(req)) ?? {};
@@ -95,6 +97,7 @@ export function accountRoutes() {
         if (b.plan === null) { a.account.subscription = null; a.account.plan = "free"; }
         else if (b.plan) { a.account.subscription = subscription(b.plan, Number(b.weekly) || 0, Number(b.fiveHour) || 0); a.account.plan = b.plan; }
         if (b.handle !== undefined) a.account.handle = b.handle;
+        if (Array.isArray(b.repos)) a.repos = b.repos;
         return json(res, 200, { account: a.account }), true;
       }
       if (path === "/v1/coupons/redeem" && req.method === "POST") {
