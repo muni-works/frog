@@ -1244,24 +1244,129 @@ fn put_back(path: &Path, tmp: &Path) -> Result<()> {
     Ok(())
 }
 
+/// How long [`locked`] waits for another Frog to finish with a folder before giving up.
+const LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+/// A fallback lock file older than this was left by a process that died holding it.
+const LOCK_STALE: std::time::Duration = std::time::Duration::from_secs(60);
+/// The fallback lock's name, in the folder, for a drive without `flock`.
+const LOCK_FILE: &str = ".frog-lock";
+
+#[cfg(test)]
+thread_local! {
+    /// Tests: act as a drive without `flock` (some network and FUSE drives).
+    static NO_FLOCK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 /// Run `f` holding the lock on `dirs` (each once, in order): an exclusive `flock` on the folder
 /// itself, so two Frog processes changing the same files take turns and nothing lands in the
-/// folder. Elsewhere than Unix, `f` just runs.
+/// folder. Where a folder can't be `flock`ed (a drive without it, or anywhere but Unix), a
+/// lock file created only if absent (`.frog-lock`, an atomic test-and-set on the drive) stands
+/// in, removed after; one left by a process that died is taken over after a minute. Waits up
+/// to ten seconds for another Frog, then fails saying so: never runs `f` unlocked, never
+/// blocks forever (review 4, item 11).
 pub fn locked<T>(dirs: &[&Path], f: impl FnOnce() -> Result<T>) -> Result<T> {
+    locked_within(dirs, LOCK_WAIT, f)
+}
+
+fn locked_within<T>(
+    dirs: &[&Path],
+    wait: std::time::Duration,
+    f: impl FnOnce() -> Result<T>,
+) -> Result<T> {
     let mut dirs: Vec<&Path> = dirs.to_vec();
     dirs.sort();
     dirs.dedup();
+    let deadline = std::time::Instant::now() + wait;
+    let mut held = Vec::new();
+    // A folder that isn't there holds nothing to race on (and couldn't hold a lock file).
+    for d in dirs.into_iter().filter(|d| d.is_dir()) {
+        held.push(Held::take(d, deadline)?);
+    }
+    let out = f();
+    drop(held);
+    out
+}
+
+/// One folder's lock, let go on drop.
+enum Held {
     #[cfg(unix)]
-    let _held: Vec<std::fs::File> = dirs
-        .iter()
-        .filter_map(|d| {
-            let f = std::fs::File::open(d).ok()?;
+    Flock(#[allow(dead_code)] std::fs::File),
+    File(PathBuf),
+}
+
+impl Held {
+    fn take(dir: &Path, deadline: std::time::Instant) -> Result<Self> {
+        let busy = || {
+            anyhow::anyhow!(
+                "another Frog has been changing files in {} for over {} seconds; try again once it's done",
+                dir.display(),
+                LOCK_WAIT.as_secs()
+            )
+        };
+        #[cfg(unix)]
+        if let Some(f) = Self::flockable(dir) {
             use std::os::fd::AsRawFd;
-            // SAFETY: a valid descriptor this function owns; the lock goes with it on drop.
-            (unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX) } == 0).then_some(f)
-        })
-        .collect();
-    f()
+            loop {
+                // SAFETY: a valid descriptor this function owns; the lock goes with it on drop.
+                if unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+                    return Ok(Held::Flock(f));
+                }
+                let e = std::io::Error::last_os_error();
+                if e.raw_os_error() != Some(libc::EWOULDBLOCK) {
+                    break; // not supported here: the lock file instead
+                }
+                if std::time::Instant::now() >= deadline {
+                    return Err(busy());
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+        }
+        let path = dir.join(LOCK_FILE);
+        loop {
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+            {
+                Ok(_) => return Ok(Held::File(path)),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    let stale = std::fs::metadata(&path)
+                        .and_then(|m| m.modified())
+                        .ok()
+                        .and_then(|t| t.elapsed().ok())
+                        .is_some_and(|age| age > LOCK_STALE);
+                    if stale {
+                        let _ = std::fs::remove_file(&path);
+                        continue;
+                    }
+                }
+                Err(e) => {
+                    return Err(e).with_context(|| format!("couldn't lock {}", dir.display()));
+                }
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err(busy());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+
+    #[cfg(unix)]
+    fn flockable(dir: &Path) -> Option<std::fs::File> {
+        #[cfg(test)]
+        if NO_FLOCK.with(|n| n.get()) {
+            return None;
+        }
+        std::fs::File::open(dir).ok()
+    }
+}
+
+impl Drop for Held {
+    fn drop(&mut self) {
+        if let Held::File(p) = self {
+            let _ = std::fs::remove_file(p);
+        }
+    }
 }
 
 fn parent_of(path: &Path) -> &Path {
@@ -1339,18 +1444,31 @@ fn put_all_back(taken: &[(&FileUndo, Option<(PathBuf, Vec<u8>)>)]) -> String {
     errs
 }
 
-/// Put back what a crash left moved aside in `dir`: each `.<name>.<id>.undo` file whose
-/// `<name>` isn't there goes back; one whose file was written since stays, never over it.
+/// How recent an aside must be to go back at start-up: one an undo had in flight when the
+/// app crashed and came straight back. An older one may predate a deliberate change (the
+/// person deleted AGENTS.md, or switched to a branch without it), so it isn't resurrected.
+const SWEEP_RESTORE: chrono::Duration = chrono::Duration::minutes(10);
+/// Past this an aside is a leftover nobody is coming back for: removed.
+const SWEEP_REMOVE: chrono::Duration = chrono::Duration::days(1);
+
+/// Put back what a crash left moved aside in `dir`: each `.<name>.<id>.undo` file from the
+/// last [`SWEEP_RESTORE`] whose `<name>` isn't there goes back (one whose file was written
+/// since stays, never over it). Older ones are left, silently, and removed after
+/// [`SWEEP_REMOVE`] (review 4, item 10).
 pub fn sweep_undo(dir: &Path) {
+    sweep_undo_at(dir, chrono::Local::now().naive_local());
+}
+
+fn sweep_undo_at(dir: &Path, now: chrono::NaiveDateTime) {
     // Under the folder's lock, so it never puts a file back in the middle of another
     // process's undo.
     let _ = locked(&[dir], || {
-        sweep_undo_locked(dir);
+        sweep_undo_locked(dir, now);
         Ok(())
     });
 }
 
-fn sweep_undo_locked(dir: &Path) {
+fn sweep_undo_locked(dir: &Path, now: chrono::NaiveDateTime) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
@@ -1362,12 +1480,26 @@ fn sweep_undo_locked(dir: &Path) {
             .and_then(|f| f.strip_suffix(".undo"))
             .and_then(|f| f.rsplit_once('.'))
             .filter(|(_, id)| is_session_id(id))
-            .map(|(name, _)| name.to_string())
+            .map(|(name, id)| (name.to_string(), id.to_string()))
         else {
             continue;
         };
+        let (name, id) = name;
+        let Ok(when) = chrono::NaiveDateTime::parse_from_str(&id[..15], "%Y%m%d-%H%M%S") else {
+            continue;
+        };
+        let age = now - when;
         let target = dir.join(&name);
-        if !target.exists() && std::fs::symlink_metadata(&target).is_err() {
+        let absent = !target.exists() && std::fs::symlink_metadata(&target).is_err();
+        if age > SWEEP_RESTORE {
+            // Old: never resurrected. Removed after a day once its file is back in its place
+            // (a stale copy); with the file gone it may be the only copy, so it stays.
+            if age > SWEEP_REMOVE && !absent {
+                let _ = std::fs::remove_file(e.path());
+            }
+            continue;
+        }
+        if absent {
             let _ = put_back(&target, &e.path());
         }
     }
@@ -1464,6 +1596,8 @@ pub enum Undo {
         old: Option<Value>,
         /// What the change set: undo refuses when the setting holds anything else now.
         new: Value,
+        /// The app that applied it (`Op::Settings`' `client`; empty for the unnamed one).
+        client: String,
     },
 }
 
@@ -1991,6 +2125,8 @@ mod tests {
     /// never over a file written since.
     #[test]
     fn the_sweep_puts_back_what_a_crash_left_aside() {
+        let at = |t: &str| chrono::NaiveDateTime::parse_from_str(t, "%Y%m%d-%H%M%S").unwrap();
+        let sweep_undo = |d: &Path| sweep_undo_at(d, at("20261119-120500"));
         let dir = tempfile::tempdir().unwrap();
         let aside = dir.path().join(".AGENTS.md.20261119-120000-ab12.undo");
         std::fs::write(&aside, "- a\n").unwrap();
@@ -2013,6 +2149,60 @@ mod tests {
         std::fs::write(dir.path().join(".x.undo"), "x").unwrap();
         sweep_undo(dir.path());
         assert!(dir.path().join(".x.undo").exists());
+    }
+
+    /// Review 4, item 11: the lock never runs its work unlocked and never waits forever. Held
+    /// by another, it gives up with a sentence; on a drive without `flock` a lock file stands
+    /// in, and it's gone after.
+    #[cfg(unix)]
+    #[test]
+    fn the_lock_waits_a_while_then_says_so() {
+        use std::os::fd::AsRawFd;
+        let dir = tempfile::tempdir().unwrap();
+        let other = std::fs::File::open(dir.path()).unwrap();
+        assert_eq!(unsafe { libc::flock(other.as_raw_fd(), libc::LOCK_EX) }, 0);
+        let ran = std::cell::Cell::new(false);
+        let r = locked_within(&[dir.path()], std::time::Duration::from_millis(100), || {
+            ran.set(true);
+            Ok(())
+        });
+        assert!(!ran.get(), "never unlocked");
+        assert!(format!("{:#}", r.unwrap_err()).contains("another Frog"));
+        drop(other);
+        locked(&[dir.path()], || Ok(())).unwrap();
+        // Without flock: the lock file, held while the work runs and gone after.
+        NO_FLOCK.with(|n| n.set(true));
+        locked(&[dir.path()], || {
+            assert!(dir.path().join(LOCK_FILE).exists());
+            let nested = locked_within(&[dir.path()], std::time::Duration::from_millis(50), || Ok(()));
+            assert!(nested.is_err(), "another holder waits");
+            Ok(())
+        })
+        .unwrap();
+        assert!(!dir.path().join(LOCK_FILE).exists());
+        NO_FLOCK.with(|n| n.set(false));
+    }
+
+    /// Review 4, item 10: a leftover from an old crash isn't resurrected after the person
+    /// deleted the file or switched to a branch without it. Older than the restore window
+    /// it's left, silently; older than a day it's removed.
+    #[test]
+    fn the_sweep_resurrects_nothing_old() {
+        let at = |t: &str| chrono::NaiveDateTime::parse_from_str(t, "%Y%m%d-%H%M%S").unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let hours = dir.path().join(".AGENTS.md.20261119-090000-ab12.undo");
+        let days = dir.path().join(".FROG.md.20261116-090000-cd34.undo");
+        let gone = dir.path().join(".CLAUDE.md.20261116-090000-ef56.undo");
+        std::fs::write(&hours, "- a\n").unwrap();
+        std::fs::write(&days, "- b\n").unwrap();
+        std::fs::write(&gone, "- c\n").unwrap();
+        std::fs::write(dir.path().join("FROG.md"), "- now\n").unwrap();
+        sweep_undo_at(dir.path(), at("20261119-120000"));
+        assert!(!dir.path().join("AGENTS.md").exists(), "not put back");
+        assert!(hours.exists(), "left where it is");
+        assert!(!days.exists(), "a day old, its file in place: a stale copy, removed");
+        assert!(!dir.path().join("CLAUDE.md").exists(), "not put back");
+        assert!(gone.exists(), "a day old with its file gone: maybe the only copy, kept");
     }
 
     /// Review 2, item 7: ordinary links are fine. A stow-style link into a dotfiles folder in

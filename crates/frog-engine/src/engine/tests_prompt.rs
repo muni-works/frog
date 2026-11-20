@@ -98,6 +98,7 @@ async fn turn(h: &mut Handle, prompt: &str) {
             text: prompt.into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
 }

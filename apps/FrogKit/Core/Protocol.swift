@@ -136,6 +136,8 @@ enum Op: Encodable, Sendable {
     case drainAbort
     /// The app's settings the engine reads (`design/settings.json` ids), such as `auto-note`.
     case settings(values: [String: JSONValue])
+    /// This app closed its view of the session: the engine stops counting its settings.
+    case detach
     /// "Make it a rule" on a note: the engine shows its approval card in this conversation.
     case noteToRule(id: String, scope: String)
     case shutdown
@@ -148,8 +150,14 @@ enum Op: Encodable, Sendable {
         case deadline, pr, repo, number
         case decline, servers, tools
         case values, scope
-        case choice, customize, undo, notes, typed
+        case choice, customize, undo, notes, typed, client
     }
+
+    /// This app's id on the ops that say which app they're from (`submit`, `act`,
+    /// `settings`, `detach`): several apps can share a cloud session, and the engine keeps each one's
+    /// settings apart (review 4, item 5). Set once at launch; nil sends none (tests, and the
+    /// engine then treats the app as its one unnamed client).
+    nonisolated(unsafe) static var clientID: String?
 
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: Key.self)
@@ -160,10 +168,12 @@ enum Op: Encodable, Sendable {
             if !images.isEmpty { try c.encode(images, forKey: .images) }
             if !more.isEmpty { try c.encode(more, forKey: .more) }
             if typed { try c.encode(true, forKey: .typed) }
+            try c.encodeIfPresent(Op.clientID, forKey: .client)
         case .act(let label, let send):
             try c.encode("act", forKey: .op)
             try c.encode(label, forKey: .label)
             if !send.isEmpty { try c.encode(send, forKey: .send) }
+            try c.encodeIfPresent(Op.clientID, forKey: .client)
         case .shell(let command):
             try c.encode("shell", forKey: .op)
             try c.encode(command, forKey: .command)
@@ -306,6 +316,10 @@ enum Op: Encodable, Sendable {
         case .settings(let values):
             try c.encode("settings", forKey: .op)
             try c.encode(values, forKey: .values)
+            try c.encodeIfPresent(Op.clientID, forKey: .client)
+        case .detach:
+            try c.encode("detach", forKey: .op)
+            try c.encode(Op.clientID ?? "", forKey: .client)
         case .noteToRule(let id, let scope):
             try c.encode("note_to_rule", forKey: .op)
             try c.encode(id, forKey: .id)
@@ -1205,7 +1219,8 @@ enum Event: Decodable, Sendable {
     case customizeApplied(item: String, undo: String, card: Proposal)
     case customizeUndone(undo: String, ok: Bool, message: String?)
     /// A setting the app owns, changed by Customize or its Undo. Live only.
-    case settingChange(id: String, value: JSONValue)
+    /// `client`: the app it's for (its `Op.clientID`); another app leaves it alone.
+    case settingChange(id: String, value: JSONValue, client: String? = nil)
     /// Frog kept a note on its own (docs/customize-events.md, "Noted"). Durable.
     case noted(NotedNote)
     /// Notes that came back for a turn ("Used notes"). Durable.
@@ -1252,7 +1267,7 @@ struct Envelope: Decodable, Sendable {
 
 extension Event {
     private enum Key: String, CodingKey {
-        case event
+        case event, client
         case turn, input, reason, usage, id, kind, item, delta, decision, ids, detail, summary
         case tokensBefore, tokensAfter, results, model, mode, label, level, message, error, upto, title, cwd
         case progress, total, result, inner, present
@@ -1358,7 +1373,8 @@ extension Event {
             self = .usedNotes(turn: try c.decode(UInt64.self, forKey: .turn), tokens: try c.decodeIfPresent(UInt64.self, forKey: .tokens) ?? 0,
                               notes: try c.decode([UsedNote].self, forKey: .notes))
         case "setting_change":
-            self = .settingChange(id: try c.decode(String.self, forKey: .id), value: try c.decode(JSONValue.self, forKey: .value))
+            self = .settingChange(id: try c.decode(String.self, forKey: .id), value: try c.decode(JSONValue.self, forKey: .value),
+                                  client: try c.decodeIfPresent(String.self, forKey: .client))
         case "progress":
             self = .progress(try EngineProgress(from: decoder))
         case "present_preview":

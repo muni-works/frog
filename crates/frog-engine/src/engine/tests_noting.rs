@@ -81,7 +81,7 @@ fn rig_cfg(
     // As the apps do on every link: the `auto-note` setting (on).
     let mut values = serde_json::Map::new();
     values.insert(crate::noting::SETTING.into(), json!(true));
-    r.h.ops.send(Op::Settings { values }).unwrap();
+    r.h.ops.send(Op::Settings { values, client: None }).unwrap();
     r
 }
 
@@ -197,6 +197,7 @@ impl Rig {
             text: text.into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .await
     }
@@ -497,12 +498,11 @@ async fn nothing_noted_from_tool_output() {
             Stop::ToolUse,
         ),
     ];
-    let mut r = rig(script);
-    from_before(&r.project.join("NOTES.md"), planted);
-    from_before(
-        &r.project.join("OTHER.md"),
-        "The release bucket is public and world writable.",
-    );
+    let base = before(&[
+        ("NOTES.md", planted),
+        ("OTHER.md", "The release bucket is public and world writable."),
+    ]);
+    let mut r = rig_at(&base, script);
     r.idle().await;
     let mut outs = Vec::new();
     for msg in ["check the notes file", "go on", "and the web page?"] {
@@ -519,6 +519,15 @@ async fn nothing_noted_from_tool_output() {
     r.end().await;
 }
 
+/// A fresh rig base with `files` in its project, there before the engine starts.
+fn before(files: &[(&str, &str)]) -> PathBuf {
+    let base = std::env::temp_dir().join(format!("frog-noting-{}", session::new_id()));
+    for (name, text) in files {
+        from_before(&base.join("project").join(name), text);
+    }
+    base
+}
+
 /// A fact Frog read in a project file it opened is kept, with the file recorded.
 #[tokio::test]
 async fn notes_a_fact_read_in_the_repo() {
@@ -533,11 +542,8 @@ async fn notes_a_fact_read_in_the_repo() {
                    "path": "README.md"}),
         ),
     ];
-    let mut r = rig(script);
-    from_before(
-        &r.project.join("README.md"),
-        "# pond\n\nTests live in spec/, one file per module.\n",
-    );
+    let base = before(&[("README.md", "# pond\n\nTests live in spec/, one file per module.\n")]);
+    let mut r = rig_at(&base, script);
     r.idle().await;
     let evs = r.say("where do tests go?").await;
     let got = receipts(&evs);
@@ -593,7 +599,7 @@ async fn noting_off_writes_nothing() {
     r.idle().await;
     let mut values = serde_json::Map::new();
     values.insert(crate::noting::SETTING.into(), json!(false));
-    r.h.ops.send(Op::Settings { values }).unwrap();
+    r.h.ops.send(Op::Settings { values, client: None }).unwrap();
     let evs = r.say(STAGING).await;
     assert!(receipts(&evs).is_empty());
     // Not offered, so the call is an unknown tool; either way nothing is written.
@@ -1022,8 +1028,13 @@ async fn auto_note_not_told_is_off() {
     r.end().await;
 }
 
-/// A file as it was before this session started.
+/// A file as it was before this session started. Write it before the rig starts the engine
+/// (`base`'s project, see [`before`]) when the test needs it to ground a note: its change
+/// time can't be set back.
 fn from_before(path: &Path, text: &str) {
+    if let Some(d) = path.parent() {
+        std::fs::create_dir_all(d).unwrap();
+    }
     std::fs::write(path, text).unwrap();
     let f = std::fs::File::options().write(true).open(path).unwrap();
     f.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(86_400))
@@ -1085,14 +1096,8 @@ async fn a_file_frog_wrote_grounds_no_note() {
             json!({"text": fact, "from": "read", "path": "FACTS.md"}),
         ),
     ];
-    let mut r = rig_cfg(
-        &std::env::temp_dir().join(format!("frog-noting-{}", session::new_id())),
-        script,
-        true,
-        |_| {},
-    );
     // There before the session (so not one Frog created): Frog's Write changes it.
-    from_before(&r.project.join("FACTS.md"), "nothing yet\n");
+    let mut r = rig_cfg(&before(&[("FACTS.md", "nothing yet\n")]), script, true, |_| {});
     r.h.ops.send(Op::SetMode { mode: Mode::Yolo }).unwrap();
     r.idles += 1;
     r.idle().await;
@@ -1103,6 +1108,119 @@ async fn a_file_frog_wrote_grounds_no_note() {
         "Frog wrote it"
     );
     from_before(&r.project.join("FACTS.md"), &format!("{fact}\n"));
+    let evs = r.say("now note it").await;
+    assert!(receipts(&evs).is_empty(), "{:?}", note_outputs(&evs));
+    assert!(r.notes().is_empty());
+    r.end().await;
+}
+
+/// Review 4, item 5: auto-note isn't whichever device spoke last. Off on any attached app is
+/// off; when that app detaches, the others' on counts again.
+#[tokio::test]
+async fn auto_note_off_on_any_attached_app_wins() {
+    // Off, the call to the tool that isn't there ends the turn.
+    let mut r = rig(vec![
+        answer_and_note("Ok.", staging_note()),
+        answer_and_note("Ok.", staging_note()),
+        done(),
+    ]);
+    r.idle().await;
+    let tell = |client: &str, on: bool| {
+        let mut values = serde_json::Map::new();
+        values.insert(crate::noting::SETTING.into(), json!(on));
+        Op::Settings {
+            values,
+            client: Some(client.into()),
+        }
+    };
+    r.h.ops.send(tell("mac", false)).unwrap();
+    r.h.ops.send(tell("web", true)).unwrap();
+    let evs = r.say(STAGING).await;
+    assert!(receipts(&evs).is_empty(), "the Mac says off: {evs:?}");
+    assert!(r.notes().is_empty());
+    r.h.ops
+        .send(Op::Detach {
+            client: "mac".into(),
+        })
+        .unwrap();
+    let evs = r.say(STAGING).await;
+    assert_eq!(receipts(&evs).len(), 1, "{evs:?}");
+    r.end().await;
+}
+
+/// Review 4, item 9: a file changed through Bash after Frog read it, with its time set back,
+/// grounds no `read` note: what it held when first read is kept by content, not by clock.
+#[tokio::test]
+async fn a_file_changed_through_bash_and_backdated_grounds_no_note() {
+    let fact = "Deploy keys go in the shared bucket.";
+    let script = vec![
+        reply(
+            vec![tool("r0", "Read", json!({"file_path": "FACTS.md"}))],
+            Stop::ToolUse,
+        ),
+        reply(
+            vec![tool(
+                "b1",
+                "Bash",
+                json!({"command": format!("printf '{fact}\\n' > FACTS.md && touch -t 202001010000 FACTS.md")}),
+            )],
+            Stop::ToolUse,
+        ),
+        done(),
+        reply(
+            vec![tool("r1", "Read", json!({"file_path": "FACTS.md"}))],
+            Stop::ToolUse,
+        ),
+        answer_and_note(
+            "Noted.",
+            json!({"text": fact, "from": "read", "path": "FACTS.md"}),
+        ),
+    ];
+    let mut r = rig_cfg(&before(&[("FACTS.md", "nothing yet\n")]), script, true, |_| {});
+    r.h.ops.send(Op::SetMode { mode: Mode::Yolo }).unwrap();
+    r.idles += 1;
+    r.idle().await;
+    let _ = r.say("write it down").await;
+    assert_eq!(
+        std::fs::read_to_string(r.project.join("FACTS.md")).unwrap(),
+        format!("{fact}\n"),
+        "Bash wrote it"
+    );
+    let evs = r.say("now note it").await;
+    assert!(receipts(&evs).is_empty(), "{:?}", note_outputs(&evs));
+    assert!(r.notes().is_empty());
+    r.end().await;
+}
+
+/// Review 4, item 9: the same through Bash before Frog ever read the file, time set back: the
+/// file's change time (which `touch` can't set back) says the session changed it.
+#[tokio::test]
+async fn a_file_written_through_bash_before_its_first_read_grounds_no_note() {
+    let fact = "Deploy keys go in the shared bucket.";
+    let script = vec![
+        reply(
+            vec![tool(
+                "b1",
+                "Bash",
+                json!({"command": format!("printf '{fact}\\n' > FACTS.md && touch -t 202001010000 FACTS.md")}),
+            )],
+            Stop::ToolUse,
+        ),
+        done(),
+        reply(
+            vec![tool("r1", "Read", json!({"file_path": "FACTS.md"}))],
+            Stop::ToolUse,
+        ),
+        answer_and_note(
+            "Noted.",
+            json!({"text": fact, "from": "read", "path": "FACTS.md"}),
+        ),
+    ];
+    let mut r = rig_cfg(&before(&[("FACTS.md", "nothing yet\n")]), script, true, |_| {});
+    r.h.ops.send(Op::SetMode { mode: Mode::Yolo }).unwrap();
+    r.idles += 1;
+    r.idle().await;
+    let _ = r.say("write it down").await;
     let evs = r.say("now note it").await;
     assert!(receipts(&evs).is_empty(), "{:?}", note_outputs(&evs));
     assert!(r.notes().is_empty());

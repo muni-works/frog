@@ -197,6 +197,11 @@ pub enum Op {
         /// for a change, back a note, or save a "remember …" note.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         typed: bool,
+        /// Which attached app sent it (the id it gives in [`Op::Settings`]): a `Customize`
+        /// setting change is planned only if that app applies the setting. Absent: the one
+        /// unnamed client (a local app, the terminal).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        client: Option<String>,
     },
     /// The user pressed a button in a `Present` actions block. Runs a turn like [`Op::Submit`]
     /// with `send` (or `label` when `send` is empty) as the message.
@@ -204,6 +209,9 @@ pub enum Op {
         label: String,
         #[serde(default, skip_serializing_if = "String::is_empty")]
         send: String,
+        /// Which attached app the button was pressed in, as on [`Op::Submit`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        client: Option<String>,
     },
     /// Pick the conversation back up after the app restarted mid-turn: runs a turn on the
     /// (repaired) history with `note`, or [`CONTINUE_NOTE`] when absent, as the message.
@@ -251,9 +259,19 @@ pub enum Op {
         place: Option<String>,
     },
     /// The app's current values of its settings (`design/settings.json` ids), so `Customize`
-    /// can read them and quote the old value on a card. Optional; send again on change.
+    /// can read them and quote the old value on a card. Optional; send again on change, the
+    /// whole set each time: it replaces what the same `client` sent before. Each attached app
+    /// keeps its own set (several can share a cloud session), dropped by [`Op::Detach`].
     Settings {
         values: serde_json::Map<String, serde_json::Value>,
+        /// The app's id for this attachment (any string it keeps while attached). Absent: the
+        /// one unnamed client.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        client: Option<String>,
+    },
+    /// The app with this id closed its view of the session: its settings stop counting.
+    Detach {
+        client: String,
     },
     /// Answer an [`Event::Question`]. No choices and no `other` dismisses it.
     Answer {
@@ -921,6 +939,10 @@ pub enum Event {
     SettingChange {
         id: String,
         value: serde_json::Value,
+        /// The app it's for (the one the person typed the change in, its [`Op::Settings`]
+        /// id); another app leaves it alone. Absent: the unnamed client.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        client: Option<String>,
     },
     /// The model asks the user to choose (`Ask`). Reply with [`Op::Answer`] using the same id.
     /// `item` is the tool call waiting on it.

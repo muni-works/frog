@@ -239,6 +239,7 @@ async fn turn_again(h: &mut Handle, prompt: &str) -> Vec<Envelope> {
             text: prompt.into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     until_idle(h).await
@@ -365,6 +366,7 @@ async fn run(h: &mut Handle, prompt: &str) -> Vec<Envelope> {
             text: prompt.into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     let mut out = Vec::new();
@@ -408,6 +410,7 @@ async fn submit_with_more_runs_one_turn_with_every_message_in_order() {
                 part("bravo-msg", Vec::new()),
                 part("charlie-msg", vec![png]),
             ],
+            client: None,
         })
         .unwrap();
     let mut evs = Vec::new();
@@ -616,6 +619,7 @@ async fn drain_between_tools_suspends() {
             text: "go".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     let mut sid = String::new();
@@ -710,6 +714,7 @@ async fn drain_abort_lets_the_turn_continue() {
             text: "go".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     let mut sid = String::new();
@@ -797,6 +802,7 @@ async fn drain_abort_lets_the_turn_continue() {
             text: "again".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     let mut evs2 = Vec::new();
@@ -863,6 +869,7 @@ async fn drain_kills_long_tool() {
             text: "go".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     // Drain with a deadline already in the past, as soon as the turn starts.
@@ -2537,6 +2544,7 @@ async fn use_folder_moves_a_chat_into_a_project() {
             text: "what's in my project?".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     let mut evs = Vec::new();
@@ -2643,6 +2651,7 @@ async fn a_bash_cd_logs_the_shell_cwd() {
             text: "work in the worktree".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     let mut sid = String::new();
@@ -2828,6 +2837,7 @@ async fn clear_drops_queued_shell_output() {
             text: "hello".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     while !matches!(
@@ -3156,6 +3166,7 @@ async fn bash_falls_back_to_the_session_root_when_cwd_is_deleted() {
             text: "keep going".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     let evs = until_idle(&mut h).await;
@@ -3235,6 +3246,7 @@ async fn session_resumes_with_history_replay_and_continuing_seq() {
             text: "more".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     let second = until_idle(&mut h).await;
@@ -3292,6 +3304,7 @@ async fn subscribe_while_starting_replays_before_the_first_idle() {
             text: "more".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     let second = until_idle(&mut h).await;
@@ -3598,6 +3611,7 @@ async fn a_call_in_flight_reports_as_waiting_on_the_model() {
             text: "hi".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     // The request is in: the call is mid-flight, and the status the engine published says so.
@@ -3694,6 +3708,7 @@ async fn a_birth_death_keeps_turn_ones_prompt_in_the_log_for_replay() {
             text: "the only prompt".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     // Wait until the provider has the request (the call is mid-flight), then shut down while
@@ -3815,6 +3830,7 @@ async fn a_deliver_landing_mid_call_does_not_cancel_the_running_turn() {
             text: "work".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     // The deliver lands while the first call is mid-flight (mid-call is where the cancelled
@@ -3879,6 +3895,7 @@ async fn drain_resume_continues_on_the_stored_model_with_the_note() {
             text: "go".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     // Drain the moment the turn starts, so the message safe point takes it.
@@ -3974,6 +3991,7 @@ async fn drain_during_model_stream_keeps_the_partial_text() {
             text: "go".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     // Drain while the message item is streaming.
@@ -4049,6 +4067,7 @@ async fn memory_commands_answer_without_a_model_call() {
             text: "/memory".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     let evs = until_idle(&mut h).await;
@@ -4130,6 +4149,7 @@ async fn turns_write_a_summary_that_recall_and_remember_that_find() {
             text: "fix the widget\nit doesn't paint".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     let evs = until_idle(&mut h).await;
@@ -4162,6 +4182,7 @@ async fn turns_write_a_summary_that_recall_and_remember_that_find() {
             text: "/recall widget paint".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     let evs = until_idle(&mut h).await;
@@ -4179,6 +4200,7 @@ async fn turns_write_a_summary_that_recall_and_remember_that_find() {
             text: "/recall file:widget.rs".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     let evs = until_idle(&mut h).await;
@@ -4192,6 +4214,7 @@ async fn turns_write_a_summary_that_recall_and_remember_that_find() {
             text: "Remember that widgets paint lazily. Now say hi".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     let evs = until_idle(&mut h).await;
@@ -4214,6 +4237,7 @@ async fn turns_write_a_summary_that_recall_and_remember_that_find() {
             text: "/recall lazily".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     let evs = until_idle(&mut h).await;
@@ -4366,6 +4390,7 @@ async fn stale_reads_are_pruned_when_the_turn_ends_and_logged() {
             text: "again".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     let next = calls(&until_idle(&mut h).await);
@@ -4413,6 +4438,7 @@ async fn an_edit_leaves_the_next_turns_prompt_cached() {
             text: "thanks".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     let second = calls(&until_idle(&mut h).await);
@@ -4622,6 +4648,7 @@ async fn a_mode_set_mid_turn_governs_the_next_permission_decision() {
             text: "write both".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     let mut evs = Vec::new();
@@ -5095,6 +5122,7 @@ async fn late_mcp_tools_wait_for_the_next_turn() {
             text: "again".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     until_idle(&mut h).await;
@@ -5137,6 +5165,7 @@ async fn run_now(h: &mut Handle, prompt: &str) -> Vec<Envelope> {
             text: prompt.into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     let mut out = Vec::new();
@@ -5941,6 +5970,7 @@ async fn ask_turn(h: &mut Handle, answer: Option<Answer>) -> String {
             text: "fix it".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     loop {
@@ -6014,6 +6044,7 @@ async fn an_interrupt_dismisses_the_question() {
             text: "fix it".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     let mut asked = None;
@@ -6303,6 +6334,7 @@ async fn clear_inbox_drops_queued_messages_so_a_stop_stays_stopped() {
             text: "work".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     let deliver = |h: &Handle, message: &str| {
@@ -6394,6 +6426,7 @@ async fn clear_inbox_drops_a_parked_parent_message_so_a_stop_stays_stopped() {
             text: "work".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     let mut evs = Vec::new();
@@ -6446,6 +6479,7 @@ async fn deliver_while_busy_waits_for_the_turn_boundary() {
             text: "who's around?".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     let mut order = Vec::new();
@@ -6536,6 +6570,7 @@ async fn an_irc_mention_delivers_at_the_turn_boundary_not_mid_turn() {
             text: "check the channel".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     let mut mentioned = false;
@@ -6599,6 +6634,7 @@ async fn the_irc_tool_is_absent_until_the_client_declares_the_bus() {
             text: "read the channel".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     loop {
@@ -6648,6 +6684,7 @@ async fn a_permission_card_posts_a_notice_with_a_link_never_an_approval() {
             text: "fix add".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     let mut notices = Vec::new();
@@ -6704,6 +6741,7 @@ async fn the_irc_tool_reads_quarantined_lines_and_posts_within_the_cap() {
             text: "read the channel".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     loop {
@@ -6741,6 +6779,7 @@ async fn queued_delivers_run_together_as_one_turn_in_order() {
             text: "who's around?".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     let mut first_ended = false;
@@ -6813,6 +6852,7 @@ async fn session_tools_need_a_client_that_hosts_sessions() {
             text: "list".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     loop {
@@ -6847,6 +6887,7 @@ async fn sessions_capability_offers_the_tools_and_frames_messages() {
             text: "hi".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     while !matches!(
@@ -6942,6 +6983,7 @@ async fn archive_session_round_trips_through_the_client() {
             text: "tidy up".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     let mut saw_empty_error = false;
@@ -7008,6 +7050,7 @@ async fn move_session_round_trips_through_the_client() {
             text: "re-file it".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     let mut moves = 0;
@@ -7088,6 +7131,7 @@ async fn a_refused_move_changes_no_engine_state() {
             text: "try the move".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     let mut refused = false;
@@ -7209,6 +7253,7 @@ mod egress_tests {
                 text: text.into(),
                 images: Vec::new(),
                 more: Vec::new(),
+                client: None,
             })
             .unwrap();
     }
@@ -7945,6 +7990,7 @@ async fn turn_timing_keeps_permission_waits_out_of_tool_time() {
             text: "nap".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     loop {
@@ -8049,6 +8095,7 @@ async fn permission_requests_preview_the_exact_edit() {
             text: "fix add".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     let preview = loop {
@@ -8154,6 +8201,7 @@ async fn file_tools_stay_rooted_in_the_session_worktree() {
             text: "make a file".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     let mut evs = Vec::new();
@@ -8264,6 +8312,7 @@ async fn an_absolute_write_into_the_main_checkout_asks_and_stays_out() {
             text: "write it".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     let mut asked = false;
@@ -8309,6 +8358,7 @@ async fn an_absolute_write_into_the_main_checkout_asks_and_stays_out() {
             text: "write it".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     loop {
@@ -8368,6 +8418,7 @@ async fn rewind_restores_files_and_branches_the_conversation() {
             text: "create notes".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     until_idle(&mut h).await;
@@ -8377,6 +8428,7 @@ async fn rewind_restores_files_and_branches_the_conversation() {
             text: "bump notes".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     until_idle(&mut h).await;
@@ -8443,6 +8495,7 @@ async fn rewind_in_a_git_repo_undoes_shell_commands_too() {
             text: "make a mess".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     until_idle(&mut h).await;
@@ -8496,6 +8549,7 @@ async fn preview_actions_ask_and_round_trip_through_the_client() {
             text: "try it".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     let (mut asked, mut requested, mut evs) = (Vec::new(), Vec::new(), Vec::new());
@@ -8635,6 +8689,7 @@ async fn a_small_window_still_gets_the_panes() {
             text: "open the preview".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     let mut opened = false;
@@ -8689,6 +8744,7 @@ async fn a_preview_that_cannot_load_says_so() {
             text: "open it".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     let mut result = None;
@@ -9124,6 +9180,7 @@ async fn a_broken_stream_discards_what_started_early() {
             text: "edit it".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     let evs = until_idle(&mut h).await;
@@ -9389,6 +9446,7 @@ async fn interrupting_cancels_early_tools() {
             text: "look".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     let mut evs = Vec::new();
@@ -9467,6 +9525,7 @@ async fn interrupt_cancels_a_running_bash_tool() {
             text: "sleep".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     // Wait for the tool to start (allowing its permission card), then stop the turn.
@@ -9568,6 +9627,7 @@ fn submit(h: &Handle, text: &str) {
             text: text.into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
 }
@@ -11024,6 +11084,7 @@ async fn a_compaction_emits_what_it_kept() {
             text: "fix the login bug".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     let _ = until_idle(&mut h).await;
@@ -11365,6 +11426,7 @@ async fn writes_and_unknowns_still_ask_in_default_mode() {
                 text: "go".into(),
                 images: Vec::new(),
                 more: Vec::new(),
+                client: None,
             })
             .unwrap();
         let mut asked = false;
@@ -11850,6 +11912,7 @@ async fn a_non_public_webfetch_still_asks_in_default_mode() {
             text: "go".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     loop {
@@ -11923,6 +11986,7 @@ async fn turn_answering(
             text: "go".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     let mut evs = Vec::new();
@@ -12179,6 +12243,7 @@ async fn next_turn(
             text: prompt.into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     let mut evs = Vec::new();
@@ -12784,6 +12849,7 @@ async fn loop_collect(
             text: "go".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     let mut evs: Vec<Envelope> = Vec::new();
@@ -13259,6 +13325,7 @@ async fn memory_tool_is_offered_only_with_compiled_memory() {
             text: "hello".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     until_idle(&mut h).await;
@@ -13365,6 +13432,7 @@ async fn start_session_refuses_a_model_its_gateway_does_not_list() {
             text: "start three".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     // The client answers every request it's actually given (the unlisted model's never is).
@@ -14002,7 +14070,7 @@ async fn prs_bind_from_gh_pr_create_and_by_hand() {
     let (mut h, _) = engine_sent(script, Some(store.clone()), None, None, root.clone());
     while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
     h.ops
-        .send(Op::Submit { typed: false, text: "open a pr".into(), images: Vec::new(), more: Vec::new() })
+        .send(Op::Submit { typed: false, text: "open a pr".into(), images: Vec::new(), more: Vec::new(), client: None })
         .unwrap();
     let mut sid = String::new();
     let mut evs = Vec::new();
@@ -14155,6 +14223,7 @@ async fn a_session_with_a_server_that_wants_a_sign_in_opens_no_browser() {
             text: "hello".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     loop {
@@ -14371,6 +14440,7 @@ async fn signing_in_from_the_session_installs_the_tools() {
             text: "hello".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     loop {
@@ -14608,6 +14678,7 @@ mod open_pr_tests {
                 text: "anything else?".into(),
                 images: Vec::new(),
                 more: Vec::new(),
+                client: None,
             })
             .unwrap();
         let second = notices(&until_idle(&mut h).await);
@@ -14705,6 +14776,7 @@ async fn a_warmed_draft_is_the_prefix_of_the_turn_that_sends_it() {
             text: "fix the bug in parse".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     let calls = calls(&until_idle(&mut h).await);
@@ -14748,6 +14820,7 @@ async fn run_no_wait(h: &mut Handle, prompt: &str) -> Vec<Envelope> {
             text: prompt.into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     until_idle(h).await
@@ -14848,6 +14921,7 @@ async fn a_draft_typed_mid_turn_is_warmed_when_the_turn_ends() {
             text: "go".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     while sent.lock().unwrap().is_empty() {
@@ -14892,6 +14966,7 @@ async fn a_message_sent_mid_turn_makes_the_held_draft_stale() {
             text: "go".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     while sent.lock().unwrap().is_empty() {
@@ -14904,6 +14979,7 @@ async fn a_message_sent_mid_turn_makes_the_held_draft_stale() {
             text: "the whole thought".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -15163,6 +15239,7 @@ async fn stop_on_ask(h: &mut Handle, text: &str, ms: u64) -> Vec<Envelope> {
             text: text.into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     let mut evs = Vec::new();
@@ -15295,6 +15372,7 @@ async fn permission_waits_are_timed() {
             text: "write it".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     let mut evs = Vec::new();

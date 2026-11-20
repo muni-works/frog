@@ -526,8 +526,9 @@ struct Shared {
     /// The alternative a user picked on a `Customize` card, by request id, until the agent
     /// picks it up.
     choices: Mutex<HashMap<String, String>>,
-    /// The app's settings as it last reported them (`Op::Settings`), plus changes made since.
-    settings: Mutex<serde_json::Map<String, Value>>,
+    /// Each attached app's settings as it last reported them (`Op::Settings`), plus changes
+    /// made since (`customize::ClientSettings`).
+    settings: Mutex<customize::ClientSettings>,
     /// Open `Ask` questions, answered by `Op::Answer`.
     questions: Mutex<HashMap<String, oneshot::Sender<crate::protocol::Answer>>>,
     /// The open ones a child's watcher raised (see `child_watch`), by id, as sent. They
@@ -595,6 +596,11 @@ struct Shared {
     /// engine-owned child (parked the same way): `Op::ClearInbox` voids those, like the
     /// session messages in the work queue, and keeps the user's own follow-ups.
     submitted: Mutex<Vec<(crate::protocol::Part, bool)>>,
+    /// The app the latest typed message parked in `submitted` came from (`Op::Submit`'s
+    /// `client`), set and taken under `submitted`'s lock: a follow-up typed in another app
+    /// joins the running turn as that app's words, so a setting change it asks for is that
+    /// app's.
+    submitted_client: Mutex<Option<String>>,
     /// The mode the client asked for ([`Op::SetMode`]), as a [`Mode`] discriminant. The router
     /// stores it immediately (a safety setting, not conversation state), the permit path picks
     /// it up per decision, and the agent's `handle` reconciles its own copy and logs
@@ -843,6 +849,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
         inbox_void: Default::default(),
         inbox_waiting: Default::default(),
         submitted: Default::default(),
+        submitted_client: Default::default(),
         mode: AtomicU8::new(opts.mode as u8),
         wake_hold: Default::default(),
         journal,
@@ -1038,7 +1045,12 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                     }
                 }
                 // State, not a turn: the app's settings land at once.
-                Op::Settings { values } => router.settings.lock().unwrap().extend(values),
+                Op::Settings { values, client } => router
+                    .settings
+                    .lock()
+                    .unwrap()
+                    .declare(client.as_deref().unwrap_or_default(), values),
+                Op::Detach { client } => router.settings.lock().unwrap().detach(&client),
                 Op::Answer { id, answer } => {
                     if let Some(tx) = router.questions.lock().unwrap().remove(&id) {
                         let _ = tx.send(answer);
@@ -1109,6 +1121,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                     images,
                     more,
                     typed,
+                    client,
                 } => {
                     // Mid-turn the turn loop owns this queue: the parts park in order, and
                     // its next tool-call boundary delivers them as user messages of the
@@ -1121,17 +1134,19 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                             typed,
                         }];
                         all.extend(more);
-                        router
-                            .submitted
-                            .lock()
-                            .unwrap()
-                            .extend(all.into_iter().map(|p| (p, false)));
+                        let typed = all.iter().any(|p| p.typed);
+                        let mut queue = router.submitted.lock().unwrap();
+                        if typed {
+                            *router.submitted_client.lock().unwrap() = client;
+                        }
+                        queue.extend(all.into_iter().map(|p| (p, false)));
                     } else if work_tx
                         .send(Op::Submit {
                             text,
                             images,
                             more,
                             typed,
+                            client,
                         })
                         .is_err()
                     {
@@ -1448,7 +1463,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
             // turn never delivered (it had no tool call to stop at) go now, as the next turn,
             // before the engine goes idle — the first is its input, the rest as `more`, in
             // order, each with its images. Never lost.
-            let parked = take_submitted_marked(&shared);
+            let (parked, parked_client) = take_submitted_with_client(&shared);
             let late = shared.late_warm.lock().unwrap().take();
             if !parked.is_empty() {
                 // Each keeps its own `typed`: a parent's message parked with them goes along,
@@ -1460,6 +1475,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                     text: first.text,
                     images: first.images,
                     more: parts.collect(),
+                    client: parked_client,
                 });
                 continue;
             }
@@ -1591,20 +1607,14 @@ fn draining(shared: &Shared) -> bool {
         .is_some_and(|s| !s.acked)
 }
 
-    /// Take everything the user submitted while the current turn has been running, in order.
-    /// The turn loop drains this at a tool-call boundary and delivers the entries as user
-    /// messages of the running turn, so the model reads them before its next step (they no
-    /// longer wait for the whole turn to end). Exactly once: drained is drained.
-    fn take_submitted(shared: &Shared) -> Vec<crate::protocol::Part> {
-        take_submitted_marked(shared)
-            .into_iter()
-            .map(|(part, _)| part)
-            .collect()
-    }
-
-    /// The composer's queue with each part's mark: `true` for a parent's message to its child.
-    fn take_submitted_marked(shared: &Shared) -> Vec<(crate::protocol::Part, bool)> {
-        std::mem::take(&mut *shared.submitted.lock().unwrap())
+    /// The composer's queue with each part's mark (`true` for a parent's message to its
+    /// child), and the app the latest typed one came from. Exactly once: drained is drained.
+    fn take_submitted_with_client(
+        shared: &Shared,
+    ) -> (Vec<(crate::protocol::Part, bool)>, Option<String>) {
+        let mut queue = shared.submitted.lock().unwrap();
+        let client = shared.submitted_client.lock().unwrap().take();
+        (std::mem::take(&mut *queue), client)
     }
 
 /// Like [`drain_pending`], but for the composer's queue: yields first so the router task
@@ -2008,6 +2018,9 @@ struct Agent {
     noted_turn: Option<u64>,
     /// "Remember that …" kept a note from the message this turn answers, so `Note` doesn't.
     remembered: bool,
+    /// The app the message this turn answers came from (`Op::Submit`'s `client`; empty for
+    /// the unnamed one): whose settings a `Customize` change may touch.
+    turn_client: String,
     /// The notes' vectors, while they're in step with `notes`: each turn then brings back only
     /// the notes that fit (`memvec`). `None` falls back to the whole index in the prompt.
     note_index: Option<crate::memvec::Index>,
@@ -2020,6 +2033,13 @@ struct Agent {
     notes_per_turn: bool,
     /// Files a `Read` call succeeded on this session: the only files a `read` note can come from.
     read_by_frog: HashSet<PathBuf>,
+    /// What each of those held when first read (a content hash; `None`: unreadable or too
+    /// big then). A `read` note needs the file to hold exactly that still, and never to have
+    /// held anything else after a tool call since: changed by any tool, Bash included, with
+    /// its time set back or not, it's no longer a fact Frog read (review 4, item 9).
+    read_hashes: HashMap<PathBuf, Option<u64>>,
+    /// Read files whose content changed after their first read (seen after a tool call).
+    changed_after_read: HashSet<PathBuf>,
     /// Files Frog's Edit or Write changed this session: the model's own text, never a `read`
     /// note's grounds (nor is anything changed since `started`, by Bash or anyone).
     written_by_frog: HashSet<PathBuf>,
@@ -2378,11 +2398,14 @@ impl Agent {
             declined: resumed_declined,
             noted_turn: None,
             remembered: false,
+            turn_client: String::new(),
             note_index: None,
             notes_sent: HashSet::new(),
             notes_in_prompt: HashSet::new(),
             notes_per_turn: false,
             read_by_frog: HashSet::new(),
+            read_hashes: HashMap::new(),
+            changed_after_read: HashSet::new(),
             written_by_frog: HashSet::new(),
             started: resumed_created
                 .and_then(|ms| u64::try_from(ms).ok())
@@ -3173,7 +3196,9 @@ impl Agent {
                 images,
                 more,
                 typed,
+                client,
             } => {
+                self.turn_client = client.unwrap_or_default();
                 // A memory command is answered alone; one sent with others is just words. See
                 // `memory_command` for where each works; natural-language "remember …" below
                 // needs typed text.
@@ -3190,7 +3215,12 @@ impl Agent {
                         .await?
                 }
             }
-            Op::Act { label, send } => {
+            Op::Act {
+                label,
+                send,
+                client,
+            } => {
+                self.turn_client = client.unwrap_or_default();
                 let text = if send.trim().is_empty() {
                     label.clone()
                 } else {
@@ -3351,6 +3381,7 @@ impl Agent {
             | Op::DismissWakes
             | Op::Permission { .. }
             | Op::Settings { .. }
+            | Op::Detach { .. }
             | Op::Answer { .. }
             | Op::SessionReply { .. }
             | Op::Elicit { .. }
@@ -3548,7 +3579,7 @@ pub(crate) const DENIED_ENDING: &str =
 
 /// Where a session's declined offers are kept: beside its log.
 pub(super) fn declined_path(store: &std::path::Path, id: &str) -> PathBuf {
-    store.join(format!("{id}.declined"))
+    crate::session::declined_path(store, id)
 }
 
 /// A session's declined offers, one key a line (none when there's no file).

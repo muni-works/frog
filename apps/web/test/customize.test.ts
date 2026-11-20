@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createElement as h } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import TestRenderer from "react-test-renderer";
 import { byText, click, closeHarness, find, hasClass, key, mount, shownText, act, type Page } from "./app-harness.ts";
 import {
   activityLevels, CUSTOMIZE_SECTIONS, customizeAtOf, customizePath, customizePathIsCanonical, docsSlugFor, EXPLAINERS, toolsLabel, usedLabel, weekDays, weightBars, type CustomizeAt,
@@ -320,6 +321,25 @@ test("the empty list's \"Fix a bug in one of my repos\" opens Settings › Accou
 test("Settings › Memory hides the Notes on its own switch while notes are off", () => {
   const html = renderToStaticMarkup(h(CustomizePage, { at: { section: "memory" }, report: SAMPLE.report, docSlugs: [], onOpen() {}, onDocs() {} }));
   assert.ok(!html.includes("Notes on its own") && !html.includes("keeps short notes"), html);
+});
+
+// Review 4, item 8: a card that changes auto-note (or its Undo) moves the switch.
+test("Settings › Memory's switch follows a card's change", async () => {
+  const g = globalThis as unknown as { localStorage?: unknown };
+  const hadStore = g.localStorage;
+  const kept = new Map<string, string>();
+  g.localStorage = { getItem: (k: string) => kept.get(k) ?? null, setItem: (k: string, v: string) => { kept.set(k, v) }, removeItem: (k: string) => { kept.delete(k) } };
+  try {
+    const { applySetting } = await import("../src/settings.ts");
+    applySetting("auto-note", true);
+    let r!: TestRenderer.ReactTestRenderer;
+    act(() => { r = TestRenderer.create(h(CustomizePage, { at: { section: "memory" }, report: SAMPLE.report, docSlugs: [], notes: true, onOpen() {}, onDocs() {} })); });
+    const sw = () => r.root.find((n) => n.type === "input" && n.props["aria-label"] === "Notes on its own");
+    assert.equal(sw().props.checked, true);
+    act(() => { applySetting("auto-note", false); });
+    assert.equal(sw().props.checked, false);
+    act(() => r.unmount());
+  } finally { g.localStorage = hadStore }
 });
 
 // Review 3, item 9: the web's Settings › Memory has the "Notes on its own" switch, and turning it

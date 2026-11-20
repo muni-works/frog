@@ -229,6 +229,7 @@ async fn handle(mut sock: TcpStream, token: &str, t: &Template) -> Result<()> {
         // Not typed: a message from a chat bridge, not the composer. And not `Config::direct`
         // (the sender may not be the owner), so `/remember` and `/forget` are refused here.
         typed: false,
+        client: None,
     })?;
     h.ops.send(Op::Shutdown)?;
     let (mut ended, mut gone) = (false, false);

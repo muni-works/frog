@@ -32,6 +32,8 @@ enum CustomizeSettings {
             // Noting on its own: every live engine hears it, not only the one that changed it.
             if id == "auto-note", defaults == .standard {
                 Library.shared.everyConversation().forEach { $0.link?.send(.settings(values: CustomizeStore.engineSettings())) }
+                // The Settings switch shows it.
+                NotificationCenter.default.post(name: CustomizeStore.autoNoteChanged, object: nil)
             }
             return true
         default:
