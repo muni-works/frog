@@ -185,3 +185,17 @@ span.ss-who { cursor: default; }
   /* The field is a 44 px target too. */
   .cz-card textarea { min-height: 44px; }
 }
+
+/* ---- the rest of the pass ---- */
+@media (max-width: 760px) {
+  /* Under a message: its actions show, no hover needed. */
+  .hover-row { opacity: 1; }
+  /* The inspector (preview, changes, terminal) is a full-screen sheet over the conversation. */
+  .insp { inset: 0 !important; z-index: 45; padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
+  .insp .insp-x { width: 44px; height: 44px; }
+}
+/* Touch: a tool row's actions (copy the command, show the change) are always there. */
+@media (hover: none) {
+  .tx .line-acts { position: static; transform: none; opacity: 1; pointer-events: auto; margin-left: 4px; }
+  .tx .line-plate:has(.line-acts) .line-result { visibility: visible; }
+}
