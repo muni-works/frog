@@ -222,3 +222,15 @@ span.ss-who { cursor: default; }
   .tx .turn-foot { flex-wrap: wrap; row-gap: 4px; }
   .tx .turn-foot > .turn-line { flex-shrink: 0; max-width: 100%; }
 }
+
+/* The where-chip beside the meter on a narrow card: it keeps its start and ellipsizes at the end
+   (the wide card's middle cut could leave only "dbox" of "Scratch sandbox"). Under 350 px (phones
+   at 375 and below) the meter keeps its words and drops its bar, so the chip has room to be read. */
+@container (max-width: 419px) {
+  .cz-where-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cz-where-head, .cz-where-tail { display: inline; white-space: nowrap; }
+}
+@container (max-width: 350px) {
+  .cz-meter-bar { display: none; }
+  .cz-meter { padding: 0 4px; }
+}

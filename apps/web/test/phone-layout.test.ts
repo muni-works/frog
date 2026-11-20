@@ -180,3 +180,56 @@ test("phone 390: a plan bought from the wall resumes the stopped turn", { skip }
     assert.equal(me.account.subscription?.name, "Pro");
   } finally { await p.close(); }
 });
+
+// The where-chip beside the meter keeps its start (live at 375 px, signed in on a plan, "Scratch
+// sandbox" read as "dbox"): it truncates at the end, and the meter's words are whole. With the
+// longest meter label and a long repo name, at 360 and 375.
+const chip = `(() => {
+  const name = document.querySelector('.cz-where-name');
+  if (!name) return { missing: true };
+  const box = name.getBoundingClientRect();
+  const walker = document.createTreeWalker(name, NodeFilter.SHOW_TEXT);
+  let first = walker.nextNode();
+  while (first && !first.textContent.trim()) first = walker.nextNode();
+  const r = document.createRange(); r.setStart(first, 0); r.setEnd(first, 1);
+  const c = r.getBoundingClientRect();
+  const label = document.querySelector('.cz-meter-label');
+  // Cut short, the cut is at the end: the name's last letters are what's hidden, never its middle.
+  const cut = name.scrollWidth > name.clientWidth + 0.5;
+  const tail = name.querySelector('.cz-where-tail');
+  const atEnd = !cut || !tail || tail.getBoundingClientRect().right > box.right + 0.5;
+  return { text: name.textContent, start: c.left >= box.left - 0.5 && c.right <= box.right + 0.5, atEnd, cut, width: Math.round(box.width), meter: label?.textContent, meterWhole: !!label && label.scrollWidth <= label.clientWidth + 0.5 };
+})()`;
+const LONG = "ada/teleoperation-web-app-for-so101-arms";
+for (const w of [360, 375]) {
+  for (const s of [
+    { name: "on a plan, home", acct: { credit_cents: 500, plan: "pro", weekly: 0.12, history: [] }, meter: "12% of week", repo: null },
+    { name: "out of credit, home", acct: { credit_cents: 0, plan: null, history: [] }, meter: "Out of credit", repo: null },
+    { name: "on a plan, a long repo", acct: { credit_cents: 500, plan: "pro", weekly: 0.12, history: [], repos: [LONG] }, meter: "12% of week", repo: LONG },
+    { name: "out of credit, a long repo", acct: { credit_cents: 0, plan: null, history: [], repos: [LONG] }, meter: "Out of credit", repo: LONG },
+  ]) {
+    test(`phone ${w}: the where-chip keeps its start beside the meter, ${s.name}`, { skip }, async () => {
+      const key = `frog_chip_${w}_${s.name.replace(/\W+/g, "_")}`;
+      await r.call(key, "/v1/mock/account", s.acct);
+      const p = await r.phone("/", w, w === 360 ? 780 : 812, key);
+      try {
+        assert.ok(await has(p, ".cz-where-name"));
+        // A repo picked from the chip's menu: the new session's composer names it.
+        if (s.repo) {
+          await tap(p, ".cz-where");
+          await until(() => p.eval<boolean>(`[...document.querySelectorAll('[role=menuitemradio]')].some((b) => b.textContent.includes(${JSON.stringify(s.repo.split("/")[1])}))`));
+          await p.eval(`[...document.querySelectorAll('[role=menuitemradio]')].find((b) => b.textContent.includes(${JSON.stringify(s.repo.split("/")[1])})).click()`);
+          assert.ok(await until(async () => ((await text(p, ".cz-where-name")) ?? "").includes("teleoperation")), "the chip names the repo");
+        }
+        await until(async () => (await text(p, ".cz-meter-label")) === s.meter);
+        await pause(300);
+        const c = await p.eval<{ text: string; start: boolean; atEnd: boolean; cut: boolean; width: number; meter: string; meterWhole: boolean }>(chip);
+        assert.equal(c.meter, s.meter);
+        assert.ok(c.meterWhole, `the meter's words are whole: ${JSON.stringify(c)}`);
+        assert.ok(c.start, `the chip's first letter shows: ${JSON.stringify(c)}`);
+        assert.ok(c.atEnd, `the chip is cut at its end: ${JSON.stringify(c)}`);
+        holds(await audit(p), `where-chip, ${s.name}`);
+      } finally { await p.close(); }
+    });
+  }
+}
