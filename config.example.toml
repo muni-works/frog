@@ -33,6 +33,9 @@ load_claude_md = true
 # sandbox_shell = true
 # Let the agent see and drive macOS apps (the bundled frog-desktop MCP server).
 # computer_use = false
+# Hold this Mac's draw above idle to an average of this many watts while local models run
+# (off-grid or garage setups). Needs the power sensor; cloud models aren't held.
+# power_limit_w = 60
 
 # Auto mode's classifier (a profile or provider/model). Default: Apple's on-device model where
 # it exists, else Frog Cloud's small model. The fallback is tried when it can't answer; unset,
