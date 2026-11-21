@@ -213,10 +213,8 @@ struct TurnView: View, Equatable {
         .onHover { hoveringPrompt = $0 }
     }
 
-    // The answer being written is a typing bubble at the turn's end, not a plain row: the
-    // model's words appear as they arrive, with the frog beside them. The bubble IS that row
-    // (so the handoff is a fade inside one view, not a swap of two), and it settles to the
-    // plain row when the message completes; tool rows run above it.
+    // The answer being written is its plain row from the first word (`ReplyText`): the words
+    // appear where they'll rest, so completing changes nothing but the ink; tool rows run above.
     private func row(_ segment: TurnFlow.Segment) -> some View {
         VStack(alignment: .leading, spacing: space.block) {
             SegmentRow(segment: segment, conversation: conversation, live: running, verbosity: verbosity)

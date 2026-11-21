@@ -169,7 +169,6 @@ struct LiveRow: View {
     let conversation: Conversation
     @State private var open = false
     @State private var hovered = false
-    @Environment(\.transcriptEdge) private var edge
     @Environment(\.turnSpace) private var space
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -195,10 +194,10 @@ struct LiveRow: View {
             if let state {
                 VStack(alignment: .leading, spacing: space.gaps.stats) {
                     row(state, at: ctx.date)
-                    statsLine(stats)
+                    statsLine(stats, underRow: true)
                     if open, let id = state.reasoningID, let think = turn.items.first(where: { $0.id == id }) {
                         ThinkingOutline(item: think, live: true)
-                            .padding(.leading, edge.indent)
+                            .padding(.leading, Tokens.Transcript.Layout.hang)
                             .padding(.top, TurnSpace.Inset.tight)
                     }
                 }
@@ -219,11 +218,11 @@ struct LiveRow: View {
     /// The stats, and the turn line growing at their right end (spec phase 3). The line shows
     /// once the turn has a segment, even before the stats have a figure (as on the web).
     @ViewBuilder
-    private func statsLine(_ stats: LiveStats) -> some View {
+    private func statsLine(_ stats: LiveStats, underRow: Bool = false) -> some View {
         let segments = !turn.timeline.segments(now: .now).isEmpty
         if !stats.text.isEmpty || segments {
             HStack(spacing: TurnSpace.Inset.row) {
-                if !stats.text.isEmpty { StatsLine(stats: stats) }
+                if !stats.text.isEmpty { StatsLine(stats: stats, underRow: underRow) }
                 Spacer(minLength: 0)
                 if segments { TurnLine(turn: turn, live: true) }
             }
@@ -314,7 +313,8 @@ struct LiveDot: View {
 /// Time, tokens and speed in `meta`, the hover spelling them out.
 struct StatsLine: View {
     let stats: LiveStats
-    @Environment(\.transcriptEdge) private var edge
+    /// Under the live row: with its words, one mark column in. Under a writing answer: on the line.
+    var underRow = false
 
     var body: some View {
         // Its parts with a 10 pt gap, no separator characters, as the footer and the web draw
@@ -328,10 +328,11 @@ struct StatsLine: View {
             .help(stats.help)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(stats.text)
-            // On the words, inside the indent: what the metrics report is where they start.
+            // On the words, inside the mark column: what the metrics report is where they start.
             .metricsFirstWord()
-            .padding(.leading, edge.indent)
-            .metricsRow(.stats, stats.parts.joined(separator: " "), key: "stats", fontSize: Tokens.Transcript.meta.size)
+            .padding(.leading, underRow ? Tokens.Transcript.Layout.hang : 0)
+            .metricsRow(.stats, stats.parts.joined(separator: " "), key: "stats", fontSize: Tokens.Transcript.meta.size,
+                        sub: underRow ? "after" : nil)
     }
 }
 

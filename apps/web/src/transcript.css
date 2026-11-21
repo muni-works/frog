@@ -2,21 +2,21 @@
  * gap and inset here is a token from design/tokens.json (--tx-*, --gap-*, --space-*, --radius-*);
  * test/transcript-css.test.ts fails on a raw px size or gap. Nothing outside `.tx` changes size.
  *
- * The left edge: a line's mark hangs --tx-hang into the gutter, so verbs, thoughts, the footer
- * and prose share one edge. Under 480 wide (rows.ts INSET_BELOW) the gutter narrows past the
- * hang: marks come inside the column and every text row indents by --tx-hang together. */
+ * The left edge (spec, "One left line, flush"): every row starts on the column's left line. A
+ * line's mark sits there, its words one mark column (--tx-hang) in; prose, the footer and a list's
+ * markers start on the line. Nothing hangs in the gutter, so under 480 wide (rows.ts INSET_BELOW)
+ * only the gutter narrows. */
 
 .scroll { container: transcript / inline-size; }
 .tx {
   --tx-gutter-now: var(--tx-gutter);
-  --tx-indent: 0px;
   width: 100%; max-width: calc(var(--tx-column) + 2 * var(--tx-gutter-now)); box-sizing: border-box;
   padding-inline: var(--tx-gutter-now);
   display: flex; flex-direction: column; gap: 0;
   font-size: var(--tx-body-size); line-height: var(--tx-body-line);
 }
 @container transcript (max-width: 479px) {
-  .tx { --tx-gutter-now: var(--tx-gutter-narrow); --tx-indent: var(--tx-hang); }
+  .tx { --tx-gutter-now: var(--tx-gutter-narrow); }
 }
 
 /* Gaps (spec table). Between turns the loudest; inside a turn each row's `data-row` (prose, line,
@@ -64,7 +64,7 @@
 .tx .turn > .me + .hover-row { margin-top: var(--space-tight); }
 
 /* Prose: the body role, capped at 640; code, tables and cards keep the column. */
-.tx .say { padding-left: var(--tx-indent); overflow-wrap: anywhere; }
+.tx .say { overflow-wrap: anywhere; }
 .tx .md { font-size: var(--tx-body-size); line-height: var(--tx-body-line); }
 .tx .md > :is(p, ul, ol, blockquote, h1, h2, h3, h4, h5, h6) { max-width: var(--tx-prose); }
 .tx .md :where(p, ul, ol, blockquote, hr, .md-code, .md-table) { margin: 0; }
@@ -76,14 +76,15 @@
 .tx .md h1 { font-size: calc(var(--tx-body-size) + var(--space-tight)); }
 .tx .md h2 { font-size: calc(var(--tx-body-size) + var(--space-hair)); }
 .tx .md :where(li) { margin: 0; }
-/* A reply's list markers hang in the gutter, as a line's mark does: an item's words start on the
- * edge (spec, "Two lines"). A nested list steps in by the marker column. Markdown inside a box
- * (a card, a report) keeps its markers inside. */
-.tx .say > .md > :is(ul, ol) { padding-left: 0; }
+/* A reply's list markers start on the column's line, left-aligned, and an item's words one
+ * marker column in (spec, "Two lines"); a nested list steps in by another marker column. The
+ * markers are drawn by Markdown.tsx's spans (a native ::marker can't be placed or measured). */
+.tx .say > .md :is(ul, ol) { list-style: none; padding-left: 0; }
 .tx .say > .md :is(ul, ol) :is(ul, ol) { padding-left: var(--tx-marker); }
-.tx .say > .md .md-nest { padding-left: 0; }
-.tx .say > .md .md-nest li { padding-left: calc(var(--tx-marker) * var(--d)); }
-.tx .say > .md .md-nest li > span { right: calc(100% - var(--tx-marker) * var(--d) + var(--space-row)); }
+.tx .say > .md :is(ul, ol) > li { position: relative; padding-left: var(--tx-marker); }
+.tx .say > .md .md-nest li { padding-left: calc(var(--tx-marker) * (var(--d) + 1)); }
+.tx .say > .md li > :is(.md-dot, .md-num) { position: absolute; left: 0; right: auto; }
+.tx .say > .md .md-nest li > :is(.md-dot, .md-num) { left: calc(var(--tx-marker) * var(--d)); }
 .tx .md li + li { margin-top: var(--gap-list); }
 .tx .md code { font-family: var(--font-mono); font-size: var(--tx-body-mono); line-height: 1; padding: var(--space-hair) var(--space-tight); border-radius: var(--space-tight); }
 /* Code that opens a paragraph or item: its plate overhangs the edge by its own padding, so its
@@ -95,13 +96,22 @@
 .tx .md table { font-size: calc(var(--tx-body-size) - var(--space-hair)); line-height: var(--tx-status-line); }
 .tx .md :is(th, td) { padding: var(--space-tight) var(--space-row); }
 .tx .md blockquote { padding-left: var(--space-roomy); }
-/* A prose row's boxes (code, tables) start at the column's edge, not the indent. */
-.tx .say > .md > :is(.md-code, .md-table) { margin-left: calc(-1 * var(--tx-indent)); }
-.tx .caret { display: inline-block; width: 7px; height: 14px; margin-left: var(--space-hair); vertical-align: -2px; background: var(--frog); animation: blink 1s steps(2) infinite; }
+/* A writing reply's caret: at the end of its last line of words, never a line of its own, so
+ * finishing changes nothing (spec, "A reply streams where it rests"). A reply that ends on a code
+ * box or a table has none: a caret there would add a line inside the box. */
+.tx .say[data-writing] > .md > :is(p, h1, h2, h3, h4, h5, h6):last-child::after,
+.tx .say[data-writing] > .md > :is(ul, ol):last-child > li:last-child::after,
+.tx .caret {
+  /* It takes no room in the line (the negative margin), so it never pushes the last word over. */
+  --caret: 7px;
+  content: ""; display: inline-block; width: var(--caret); height: 14px; margin-left: var(--space-hair); margin-right: calc(-1 * (var(--caret) + var(--space-hair)));
+  vertical-align: -2px; background: var(--frog); animation: blink 1s steps(2) infinite;
+}
 
 /* Lines (spec, "Lines"): one per step, a row's height tall; lines in a run touch. The plate bleeds
- * past the words on each side so nothing moves when it appears; the mark hangs in the gutter. */
-.tx .line-row { padding-left: var(--tx-indent); }
+ * past the words on each side so nothing moves when it appears; the mark sits on the column's
+ * line, left-aligned in its box, and the words (and what opens under them) one mark column in. */
+.tx .line-row { padding-left: var(--tx-hang); }
 .tx .line-plate {
   position: relative; display: flex; align-items: center; min-height: var(--gap-row);
   margin-inline: calc(-1 * var(--tx-plate-bleed)); padding-inline: var(--tx-plate-bleed);
@@ -117,9 +127,10 @@
 .tx .line:focus-visible { outline: none; }
 .tx .line-mark {
   position: absolute; left: calc(var(--tx-plate-bleed) - var(--tx-hang)); top: 50%; transform: translateY(-50%);
-  width: var(--tx-mark); height: var(--tx-mark); display: grid; place-items: center; color: var(--faint);
+  width: var(--tx-mark); height: var(--tx-mark); display: grid; place-items: center start; color: var(--faint);
 }
-.tx .line-mark.chev { font-size: var(--tx-body-size); transition: transform .15s; }
+/* A chevron's box is its glyph, so it turns about its own centre and stays on the line. */
+.tx .line-mark.chev { width: auto; font-size: var(--tx-body-size); transition: transform .15s; }
 .tx .line[aria-expanded="true"] .line-mark.chev { transform: translateY(-50%) rotate(90deg); }
 .tx .line-verb { flex: none; color: var(--muted); white-space: nowrap; }
 .tx .line-obj { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); }
@@ -155,21 +166,21 @@
 .tx .line-link { border: 0; background: none; padding: 0; font: inherit; color: var(--muted); cursor: pointer; }
 .tx .line-link:hover { color: var(--fg); }
 .tx .line-open, .tx .fold-steps, .tx .thought-body { padding-left: 0; }
-/* A fold's steps sit inside its row, which already carries the indent. */
+/* A fold's steps sit inside its row, which already carries the mark column: level with the fold. */
 .tx .fold-steps .line-row { padding-left: 0; }
 .tx .thought-body { font-size: var(--tx-status-size); line-height: var(--tx-status-line); color: var(--muted); white-space: pre-wrap; padding-bottom: var(--space-snug); }
 
 /* The footer (spec, "The footer"): one meta line, the model in muted. */
 .tx .turn-foot {
   position: relative; display: flex; align-items: center; gap: var(--space-row); min-height: var(--tx-meta-line);
-  padding-left: var(--tx-indent); font-size: var(--tx-meta-size); line-height: var(--tx-meta-line); color: var(--faint); font-variant-numeric: tabular-nums;
+  font-size: var(--tx-meta-size); line-height: var(--tx-meta-line); color: var(--faint); font-variant-numeric: tabular-nums;
 }
 .tx .turn-line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .tx .turn-model { color: var(--muted); }
 .tx .turn-foot .turn-plate { border: 0; background: transparent; color: inherit; font: inherit; padding: 0; margin: 0; border-radius: var(--radius-plate); cursor: pointer; }
 .tx .turn-foot .turn-plate:hover, .tx .turn-foot .turn-plate[aria-expanded="true"] { color: var(--muted); background: var(--hover); box-shadow: 0 0 0 var(--space-tight) var(--hover); }
 .tx .turn-foot .hover-acts { margin-left: 0; height: var(--tx-meta-line); align-items: center; }
-.tx .turn-note { padding-left: var(--tx-indent); margin-top: var(--gap-block); font-size: var(--tx-status-size); line-height: var(--tx-status-line); color: var(--muted); white-space: normal; }
+.tx .turn-note { margin-top: var(--gap-block); font-size: var(--tx-status-size); line-height: var(--tx-status-line); color: var(--muted); white-space: normal; }
 
 /* The live row (spec, "The row"): one row at the end of the running turn, a line's height, its
  * dot hung where a line's mark is. "Thinking" in fg, the thought in muted, cross-fading. The stats
@@ -178,7 +189,9 @@
 .tx .reply-block > [data-row="prose"] + [data-row="live"] { margin-top: var(--gap-activity); }
 .tx .reply-block > [data-row="prose"] + [data-row="stats"] { margin-top: var(--gap-stats); }
 .tx .reply-block > [data-row="live"]:first-child { margin-top: 0; }
-.tx .live-row, .tx .live-tail { padding-left: var(--tx-indent); }
+/* The live row is a line (its dot on the line, its words and stats a mark column in); the stats
+ * under a writing answer sit under its prose, on the line. */
+.tx .live-row { padding-left: var(--tx-hang); }
 .tx .line.live { cursor: default; }
 .tx button.line.live { cursor: pointer; }
 .tx .live-label { flex: none; color: var(--fg); white-space: nowrap; }
@@ -229,7 +242,9 @@
 .tx .live-row .start-retry { flex: none; margin-left: var(--space-tight); }
 
 @media (prefers-reduced-motion: reduce) {
-  .tx [data-state="on"] .live-dot, .tx .tool-spin, .tx .caret { animation: none; }
+  .tx [data-state="on"] .live-dot, .tx .tool-spin, .tx .caret,
+  .tx .say[data-writing] > .md > :is(p, h1, h2, h3, h4, h5, h6):last-child::after,
+  .tx .say[data-writing] > .md > :is(ul, ol):last-child > li:last-child::after { animation: none; }
   .tx .live-row[data-kind="start"] { transition: none; }
   .tx .live-thought > .tf.tf-was { display: none; }
   .tx .live-thought > .tf.tf-now { animation: none; }

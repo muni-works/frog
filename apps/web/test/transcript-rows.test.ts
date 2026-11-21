@@ -149,17 +149,11 @@ test("a failed step never folds, and splits the run", () => {
   assert.deepEqual(shape(foldRuns([s("a"), s("b"), s("c"), s("d"), s("x", { failed: true })])), ["fold(4)", "x"]);
 });
 
-test("the gutter fallback: under 26 the marks come inside and all text indents by 26", () => {
-  const wide = gutterLayout(1280);
-  assert.equal(wide.mode, "hang");
-  assert.equal(wide.indent, 0);
-  assert.ok(wide.gutter >= 26);
-  const phone = gutterLayout(375);
-  assert.equal(phone.mode, "inset");
-  assert.ok(phone.gutter < 26);
-  assert.equal(phone.indent, 26);
-  assert.equal(gutterLayout(INSET_BELOW).mode, "hang");
-  assert.equal(gutterLayout(INSET_BELOW - 1).mode, "inset");
+test("the gutter narrows under 480, and since nothing hangs in it nothing else changes", () => {
+  assert.equal(gutterLayout(1280).gutter, 32);
+  assert.equal(gutterLayout(375).gutter, 16);
+  assert.equal(gutterLayout(INSET_BELOW).gutter, 32);
+  assert.equal(gutterLayout(INSET_BELOW - 1).gutter, 16);
 });
 
 test("the CSS switches at the same width as gutterLayout", () => {
