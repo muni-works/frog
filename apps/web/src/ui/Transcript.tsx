@@ -9,6 +9,7 @@ import { Hunks } from './Diff'
 import { ICON } from './icons'
 import { endError } from '../store'
 import { used } from '../usage'
+import { useInk } from './ink'
 import { resumedLine } from '../wall'
 import { TurnFooter } from './TurnFooter'
 import { WidgetCard } from './Widget'
@@ -538,9 +539,9 @@ const TurnView = memo(function TurnView({ turn, index, live, ask, question, runn
     // A message the turn ended in the middle of (stopped) never completes: what it had written
     // stays, without a caret; with nothing written it draws nothing.
     if (e.kind === 'message' && (e.done || !(live && running)) && !e.text.trim()) return null
-    // Drawn where it rests from its first word (spec, "A reply streams where it rests"): the caret
-    // sits at the end of its last line (transcript.css), so finishing moves nothing.
-    if (e.kind === 'message') return <div className="say" data-row="prose" data-item={e.id} data-writing={!e.done && live && running ? '' : undefined}><Markdown text={e.text} /></div>
+    // Drawn where it rests from its first word (spec, "A reply streams where it rests"), written in
+    // by the pen (ink.ts) over text already laid out, so finishing moves nothing.
+    if (e.kind === 'message') return <Say e={e} writing={!e.done && live && running} />
     if (question?.item === e.id) return <div data-row="box"><QuestionCard q={question} onAnswer={cb.onAnswer} /></div>
     const asking = ask?.item === e.id ? ask : null
     const diff = e.diff ?? asking?.preview
@@ -560,7 +561,7 @@ const TurnView = memo(function TurnView({ turn, index, live, ask, question, runn
   }
   return (
     // data-turn-index: where the turn rail finds and jumps to a turn (docs/design/chrome/spec.md).
-    <div className="turn" data-turn-index={index}>
+    <div className="turn" data-turn-index={index} data-running={live && running ? '' : undefined}>
       {/* A turn the credit wall resumed (Op::Continue with wall.ts's note) is one quiet line, not a message. */}
       {resumedLine(turn.input) ? <div className="turn-note" data-row="resumed" role="status">{resumedLine(turn.input)}</div> : (
       <div className="ask-block">
@@ -632,6 +633,19 @@ const TurnView = memo(function TurnView({ turn, index, live, ask, question, runn
     </div>
   )
 })
+
+/** A reply: plain prose where it will rest from its first word, written in by the pen (ink.ts). */
+function Say({ e, writing }: { e: Entry; writing: boolean }) {
+  const say = useRef<HTMLDivElement>(null)
+  const pen = useRef<HTMLSpanElement>(null)
+  useInk(say, pen, e.text, writing)
+  return (
+    <div ref={say} className="say" data-row="prose" data-item={e.id} data-writing={writing ? '' : undefined}>
+      <Markdown text={e.text} streaming={writing} />
+      <span ref={pen} className="ink-pen" aria-hidden="true" />
+    </div>
+  )
+}
 
 /** The footer is the reply's own last line: a finished turn's, or a stopped one's that used anything. */
 function footerLeads(turn: Turn): boolean {

@@ -100,8 +100,22 @@ These are `TurnSpace.Scale`'s values. `rowGroup` (8 / 5) goes away: lines in a r
   the right line: its time axis ends where its last segment does.
 - **A reply streams where it rests.** The answer being written is plain prose in its final place
   from its first word: no card, fill or padding while it streams, and nothing beside it that
-  narrows it. Its caret sits at the end of its last line, not on a line of its own. Finishing
-  changes nothing about its layout (both apps test it).
+  narrows it. Finishing changes nothing about its layout (both apps test it).
+- **The pen writes it in, the same on both apps** (the Mac's `InkReveal`, the web's `ink.ts`).
+  Everything that has arrived is laid out at once and what the pen hasn't reached is drawn clear,
+  so nothing reflows. The pen moves no slower than reading pace (42 characters a second), at
+  most 0.32 s behind arrival, a word at a time, with a breath after a sentence. Each word inks
+  in from frog green, faint, to its own colour over 0.42 s. The pen is a 3-point green bar just
+  past the last word; it breathes while the model is quiet and fades when the answer is done.
+  Code boxes, tables and inline code's plates appear when the pen reaches them. Under reduced
+  motion, or a stream above 1,200 characters a second, text simply appears, with no pen.
+- **Half-finished markdown waits.** While a reply streams, the end of its last block is held
+  back while it's an unclosed `` ` ``, `**`, `~~` or link, a list or heading marker alone, or a
+  fence half typed, so nothing shows raw and then changes. The cases are
+  `docs/design/transcript/holdback.json`; both apps run them.
+- **New rows fade in.** A row that arrives while the turn runs fades in where it lands over
+  180 ms, opacity only, so the answer's first words fade in as the live row cuts away. A fold,
+  which replaces lines already there, doesn't.
 
 ### Lines
 

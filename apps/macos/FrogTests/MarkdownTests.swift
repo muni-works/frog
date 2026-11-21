@@ -2,6 +2,19 @@ import XCTest
 @testable import Frog
 
 final class MarkdownTests: XCTestCase {
+    /// A streaming reply holds back half-finished markdown at its end, so it never shows raw and
+    /// then changes: the shared cases (docs/design/transcript/holdback.json), which the web runs too.
+    func testStreamingHoldsBackHalfFinishedMarkdown() throws {
+        struct Case: Decodable { let why, text, shown: String }
+        struct File: Decodable { let cases: [Case] }
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("docs/design/transcript/holdback.json")
+        let file = try JSONDecoder().decode(File.self, from: Data(contentsOf: url))
+        XCTAssertGreaterThan(file.cases.count, 10)
+        for c in file.cases { XCTAssertEqual(Markdown.settled(c.text), c.shown, c.why) }
+    }
+
     func testPipeTableParses() {
         let md = """
         Intro

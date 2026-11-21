@@ -124,6 +124,29 @@ test("a finished reply's words are where they were while it streamed", { skip, t
   } finally { await p.close(); }
 });
 
+// With motion on, the pen writes it in (ink.ts, as the Mac's InkReveal): the text it hasn't
+// reached is laid out but clear (a highlight), so the lines are the same either way; once done,
+// the pen fades and every highlight is gone.
+test("with motion on the pen writes it in, and finishing leaves the lines where they were", { skip, timeout: 90_000 }, async () => {
+  const p = await open(`${site!.origin}/s/${id}`, 1280, 900, false);
+  try {
+    assert.ok(await until(async () => !!(await p.eval<boolean>("!!document.querySelector('.tx .say[data-item=\"m1\"][data-writing]') && document.querySelector('.tx .say[data-item=\"m1\"] .md')?.textContent.includes('every run')"))), "the reply streamed in");
+    await pause(800);
+    const live = await lines(p);
+    const writing = await p.eval<{ registered: boolean; pen: number }>("({ registered: CSS.highlights.has('ink-hidden'), pen: Number(document.querySelector('.tx .ink-pen')?.style.opacity || 0) })");
+    assert.ok(writing.registered, "the pen's highlights are up while it writes");
+    assert.ok(writing.pen > 0, `the pen shows (opacity ${writing.pen})`);
+    finish();
+    assert.ok(await until(async () => !!(await p.eval<boolean>("!!document.querySelector('.tx .turn-foot') && !document.querySelector('.tx .say[data-writing]')"))), "the turn finished");
+    await pause(1200);
+    const done = await lines(p);
+    const after = await p.eval<{ registered: boolean; pen: number }>("({ registered: CSS.highlights.has('ink-hidden'), pen: Number(document.querySelector('.tx .ink-pen')?.style.opacity || 0) })");
+    assert.equal(after.registered, false, "no highlight left");
+    assert.equal(after.pen, 0, "the pen faded");
+    assert.deepEqual(done?.lines, live?.lines, "every line of the reply is where it was");
+  } finally { await p.close(); }
+});
+
 async function shot(p: Page, out: string) {
   const r = await p.call("Page.captureScreenshot", { format: "png", clip: { x: 0, y: 0, width: 1280, height: 520, scale: 1 } }) as { data: string };
   writeFileSync(out, Buffer.from(r.data, "base64"));
