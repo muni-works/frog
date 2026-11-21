@@ -23,6 +23,9 @@ struct FrogApp: App {
         // Settings › Lend left on: start lending again (it pauses itself on battery or heat).
         if !SingleInstance.isTesting {
             Task { @MainActor in MacLender.shared.start() }
+            // Which app a message and a set of settings come from, for an engine several apps
+            // share (a cloud session open on the web too).
+            Op.clientID = "mac-\(UUID().uuidString.prefix(8).lowercased())"
         }
         Conversation.effects = MacEffects.shared
         Conversation.decided = { Funnel.decided(tool: $0.name, $1) }

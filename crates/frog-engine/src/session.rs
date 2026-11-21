@@ -874,7 +874,19 @@ pub fn fork(dir: &Path, id: &str, upto: Option<u64>) -> Result<String> {
         log.append(&r)?;
     }
     log.sync()?;
+    // The offers declined in the source were declined in the fork's history too (review 4,
+    // item 12): a fork doesn't offer them again.
+    let declined = declined_path(dir, id);
+    if declined.exists() {
+        let _ = std::fs::copy(&declined, declined_path(dir, &new));
+    }
     Ok(new)
+}
+
+/// Where a session's declined `Customize` offers are kept: beside its log, and removed with
+/// it (`<id>.declined`).
+pub fn declined_path(dir: &Path, id: &str) -> PathBuf {
+    dir.join(format!("{id}.declined"))
 }
 
 #[cfg(test)]
@@ -1305,5 +1317,12 @@ mod tests {
         assert_eq!(l.events.len(), 1);
         assert_eq!(l.events[0].session, b);
         assert!(fork(&dir, "a", Some(9)).is_err());
+        // Review 4, item 12: the offers declined in the source stay declined in the fork.
+        std::fs::write(declined_path(&dir, "a"), "line:Use pnpm\n").unwrap();
+        let c = fork(&dir, "a", Some(1)).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(declined_path(&dir, &c)).unwrap(),
+            "line:Use pnpm\n"
+        );
     }
 }

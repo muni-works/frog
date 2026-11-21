@@ -454,6 +454,7 @@ impl Tui {
                 images: Vec::new(),
                 more: Vec::new(),
                 typed: true,
+                client: None,
             });
         }
         true
@@ -585,6 +586,7 @@ impl Tui {
                 images: Vec::new(),
                 more: Vec::new(),
                 typed: true,
+                client: None,
             },
             _ => {
                 render::warn(&format!("  unknown command /{name} — try /help"));

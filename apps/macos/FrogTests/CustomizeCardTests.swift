@@ -103,6 +103,23 @@ final class CustomizeCardTests: XCTestCase {
         XCTAssertEqual(defaults.object(forKey: CustomizeStore.autoNoteKey) as? Bool, false)
     }
 
+    /// Review 4, item 8: a card that changes auto-note moves the Settings switch too.
+    func testTheNotesSwitchFollowsACard() {
+        let had = UserDefaults.standard.object(forKey: CustomizeStore.autoNoteKey), loads = CustomizeStore.loads
+        defer {
+            UserDefaults.standard.set(had, forKey: CustomizeStore.autoNoteKey)
+            CustomizeStore.loads = loads
+        }
+        CustomizeStore.loads = false
+        UserDefaults.standard.set(true, forKey: CustomizeStore.autoNoteKey)
+        let store = CustomizeStore()
+        XCTAssertTrue(store.autoNote)
+        XCTAssertTrue(CustomizeSettings.apply("auto-note", .bool(false)))
+        XCTAssertFalse(store.autoNote, "the switch shows the card's change")
+        XCTAssertTrue(CustomizeSettings.apply("auto-note", .bool(true)))
+        XCTAssertTrue(store.autoNote, "and its Undo")
+    }
+
     /// Review 3, item 9: a cloud link tells its engine the app's settings when it opens, as a
     /// local engine is told, so auto-note reaches Frog Cloud sessions.
     func testACloudLinkSendsTheSettingsWhenItOpens() throws {
@@ -113,6 +130,57 @@ final class CustomizeCardTests: XCTestCase {
         let ops = link.queued.compactMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
         let settings = try XCTUnwrap(ops.first { $0["op"] as? String == "settings" })
         XCTAssertEqual((settings["values"] as? [String: Any])?["auto-note"] as? Bool, false)
+    }
+
+    private func ops(_ data: [Data]) -> [[String: Any]] {
+        data.compactMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+    }
+
+    /// Review 4, item 6: a reconnect may reach a new engine (a sandbox woken from sleep), so
+    /// every welcome after the first sends the caps and settings again. A link that isn't the
+    /// person's conversation (a rename) sends neither, so it can't turn the features off for
+    /// another app with the session open. Closing says the app is gone (item 5).
+    func testACloudLinkTellsEveryEngineItReaches() throws {
+        let had = Conversation.engineSettings
+        defer { Conversation.engineSettings = had }
+        Conversation.engineSettings = { ["auto-note": .bool(false)] }
+        let link = CloudLink(gateway: CloudGateway(token: "test"), session: "s", connect: false, top: true)
+        let welcome = Data(#"{"welcome":{"last_seq":0}}"#.utf8)
+        link.take(welcome)
+        XCTAssertEqual(ops(link.lastFlush).compactMap { $0["op"] as? String }, ["set_client_caps", "settings"])
+        link.lost()
+        link.send(.interrupt)
+        link.take(welcome)
+        XCTAssertEqual(ops(link.lastFlush).compactMap { $0["op"] as? String }, ["set_client_caps", "settings", "interrupt"],
+                       "told again before anything waiting")
+        link.lost()
+        link.stop()
+        XCTAssertEqual(ops(link.queued).last?["op"] as? String, "detach")
+        let rename = CloudLink(gateway: CloudGateway(token: "test"), session: "s", connect: false, speaks: false)
+        XCTAssertTrue(rename.queued.isEmpty, "no caps, no settings")
+        rename.lost()
+        rename.stop()
+        XCTAssertTrue(rename.queued.isEmpty, "and no detach")
+    }
+
+    /// Review 4, item 5: an op says which app sent it, and a setting change for another app
+    /// (typed there) is that app's to apply.
+    func testASettingChangeForAnotherAppIsLeftAlone() throws {
+        let hadID = Op.clientID, hadApply = Conversation.applySetting
+        defer { Op.clientID = hadID; Conversation.applySetting = hadApply }
+        Op.clientID = "mac-1"
+        var applied: [String] = []
+        Conversation.applySetting = { id, _ in applied.append(id) }
+        let enc = JSONEncoder()
+        enc.outputFormatting = .sortedKeys
+        XCTAssertEqual(String(decoding: try enc.encode(Op.submit("a", typed: true)), as: UTF8.self),
+                       #"{"client":"mac-1","op":"submit","text":"a","typed":true}"#)
+        XCTAssertEqual(String(decoding: try enc.encode(Op.detach), as: UTF8.self), #"{"client":"mac-1","op":"detach"}"#)
+        let c = conversation()
+        send(c, #""setting_change","id":"theme","value":"dark","client":"web-2""#)
+        send(c, #""setting_change","id":"density","value":"compact","client":"mac-1""#)
+        send(c, #""setting_change","id":"sounds","value":true"#)
+        XCTAssertEqual(applied, ["density", "sounds"])
     }
 
     /// The sidebar's waiting line is the card's own question, not "Allow Customize Remember this??".

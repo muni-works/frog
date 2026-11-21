@@ -5,6 +5,11 @@ struct FrogApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @State private var remote = Remote.shared
 
+    init() {
+        // Which app a message comes from, for an engine several apps share (a cloud session).
+        Op.clientID = "ios-\(UUID().uuidString.prefix(8).lowercased())"
+    }
+
     var body: some Scene {
         WindowGroup {
             if Self.recordings {

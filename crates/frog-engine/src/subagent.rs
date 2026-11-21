@@ -110,6 +110,7 @@ pub async fn run(
         text: prompt,
         images: Vec::new(),
         more: Vec::new(),
+        client: None,
     })?;
     let (mut report, mut steps, mut started) = (String::new(), 0u32, false);
     // The message being written, so a stop keeps the partial report.

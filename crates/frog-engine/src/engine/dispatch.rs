@@ -779,6 +779,11 @@ Don't repeat it. {}",
                     _ => {}
                 }
             }
+            // Any call but a Read may have written (Bash, a job, an MCP tool), even one that
+            // failed: the files read so far are checked by content.
+            if &*name != "Read" {
+                self.note_changes_after_read();
+            }
             // Captured before the item's parts move into its event: the egress note's key and
             // command, and a call worth a line, queued for a gist when it finished (see the
             // queue after `ItemCompleted`). The tools whose own `display` already says what

@@ -7,7 +7,7 @@ export type Op =
   /** `typed`: the person typed (or dictated) this text in the composer. Only typed text is their
    *  own words to the engine (a Customize ask, a note, "remember …"); the app's own prompts
    *  (git actions, chips, retries, replays) leave it out. */
-  | { op: "submit"; text: string; images?: Image[]; more?: Part[]; typed?: boolean }
+  | { op: "submit"; text: string; images?: Image[]; more?: Part[]; typed?: boolean; client?: string }
   | { op: "interrupt" }
   /** Op::Continue: run a turn on the (repaired) history with `note` as its message; the wall
    *  resumes a turn that stopped on credit with it (wall.ts resumeNote). */
@@ -19,7 +19,9 @@ export type Op =
   /** "Make it a rule" on a note Frog kept: the engine answers with its card. */
   | { op: "note_to_rule"; id: string; scope: string; where?: "home" }
   /** The app's current setting values, so the engine can quote them (docs/customize-events.md). */
-  | { op: "settings"; values: Record<string, string | number | boolean> }
+  | { op: "settings"; values: Record<string, string | number | boolean>; client?: string }
+  /** This app closed its view of the session: its settings stop counting. */
+  | { op: "detach"; client: string }
   | { op: "answer"; id: string; choices?: string[]; other?: string }
   | { op: "elicit"; id: string; action: "accept" | "decline" | "cancel"; content?: unknown }
   | { op: "set_title"; title: string }
@@ -177,7 +179,7 @@ export type Event =
   | { event: "customize_applied"; item: string; undo: string; card: Proposal }
   | { event: "customize_undone"; undo: string; ok: boolean; message?: string }
   /** A setting the app owns, changed by Customize (or its undo). Live only. */
-  | { event: "setting_change"; id: string; value: string | number | boolean }
+  | { event: "setting_change"; id: string; value: string | number | boolean; client?: string }
   /** Frog kept a note on its own (docs/customize-events.md, "Noted"). Durable. */
   | { event: "noted"; item: string; turn: number; id: string; text: string; scope: "project" | "everywhere"; place: string; source: "said" | "correction" | "read"; from?: string; undo: string }
   /** Notes that came back for a turn ("Used notes"). Durable. */

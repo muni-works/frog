@@ -157,6 +157,9 @@ export interface ConnectionHandlers {
   /** The gateway's log restarted below what we'd seen (a new sandbox, a reset store): drop what
    * was folded so far, since it replays from the start. */
   onReset?(): void;
+  /** What the engine is told on every welcome, ahead of anything waiting: a reconnect may reach
+   * a new engine (a sandbox woken from sleep) that was never told (review 4, item 6). */
+  greet?(): Op[];
 }
 
 /** Reconnects that fail before a welcome, in a row, before we ask whether the token still works.
@@ -291,6 +294,7 @@ export class Connection {
       this.attempt = 0;
       this.failures = 0;
       this.set({ state: "live", welcome: v.welcome });
+      for (const op of this.handlers.greet?.() ?? []) this.wire(op);
       const to = typeof w.last_seq === "number" ? w.last_seq : 0;
       if (to > this.lastSeq) { this.historyTo = to; this.quiet(); }
       if (!this.unacked.length || to <= this.lastSeq) return this.flush();

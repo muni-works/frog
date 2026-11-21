@@ -230,7 +230,7 @@ mod tests {
         assert_eq!(next_text(&mut h).await, "streaming");
         assert_eq!(next_text(&mut h).await, "second, logged");
 
-        h.ops.send(Op::Submit { typed: false, text: "hi".into(), images: vec![], more: vec![] }).unwrap();
+        h.ops.send(Op::Submit { typed: false, text: "hi".into(), images: vec![], more: vec![], client: None }).unwrap();
         assert!(next_text(&mut h).await.contains("can't reach it"));
         drop(owner);
         let _ = std::fs::remove_dir_all(&dir);

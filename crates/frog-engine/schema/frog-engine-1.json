@@ -3023,6 +3023,13 @@
         {
           "description": "The app should set one of its settings (`design/settings.json` row `id`) to `value`:\na `Customize` change or its undo. Live only; replay never re-applies it.",
           "properties": {
+            "client": {
+              "description": "The app it's for (the one the person typed the change in, its [`Op::Settings`]\nid); another app leaves it alone. Absent: the unnamed client.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "created": {
               "format": "int64",
               "type": "integer"
@@ -5447,6 +5454,13 @@
         {
           "description": "The app should set one of its settings (`design/settings.json` row `id`) to `value`:\na `Customize` change or its undo. Live only; replay never re-applies it.",
           "properties": {
+            "client": {
+              "description": "The app it's for (the one the person typed the change in, its [`Op::Settings`]\nid); another app leaves it alone. Absent: the unnamed client.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "event": {
               "const": "setting_change",
               "type": "string"
@@ -7249,6 +7263,13 @@
       "oneOf": [
         {
           "properties": {
+            "client": {
+              "description": "Which attached app sent it (the id it gives in [`Op::Settings`]): a `Customize`\nsetting change is planned only if that app applies the setting. Absent: the one\nunnamed client (a local app, the terminal).",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "images": {
               "description": "Images attached to the message.",
               "items": {
@@ -7284,6 +7305,13 @@
         {
           "description": "The user pressed a button in a `Present` actions block. Runs a turn like [`Op::Submit`]\nwith `send` (or `label` when `send` is empty) as the message.",
           "properties": {
+            "client": {
+              "description": "Which attached app the button was pressed in, as on [`Op::Submit`].",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "label": {
               "type": "string"
             },
@@ -7444,8 +7472,15 @@
           "type": "object"
         },
         {
-          "description": "The app's current values of its settings (`design/settings.json` ids), so `Customize`\ncan read them and quote the old value on a card. Optional; send again on change.",
+          "description": "The app's current values of its settings (`design/settings.json` ids), so `Customize`\ncan read them and quote the old value on a card. Optional; send again on change, the\nwhole set each time: it replaces what the same `client` sent before. Each attached app\nkeeps its own set (several can share a cloud session), dropped by [`Op::Detach`].",
           "properties": {
+            "client": {
+              "description": "The app's id for this attachment (any string it keeps while attached). Absent: the\none unnamed client.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "op": {
               "const": "settings",
               "type": "string"
@@ -7458,6 +7493,23 @@
           "required": [
             "op",
             "values"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The app with this id closed its view of the session: its settings stop counting.",
+          "properties": {
+            "client": {
+              "type": "string"
+            },
+            "op": {
+              "const": "detach",
+              "type": "string"
+            }
+          },
+          "required": [
+            "op",
+            "client"
           ],
           "type": "object"
         },

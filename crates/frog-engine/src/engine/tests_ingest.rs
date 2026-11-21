@@ -98,6 +98,7 @@ async fn two_queued_messages_ingest_once_in_order_at_the_boundary() {
             text: "first turn".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     // Wait until the turn is running (its first model call is out), then queue two.
@@ -114,6 +115,7 @@ async fn two_queued_messages_ingest_once_in_order_at_the_boundary() {
                 text: "two".into(),
                 images: Vec::new(),
             }],
+            client: None,
         })
         .unwrap();
 
@@ -196,6 +198,7 @@ async fn two_queued_messages_ingest_once_in_order_at_the_boundary() {
             text: "after".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     let after = until_idle(&mut h).await;
@@ -249,6 +252,7 @@ async fn a_message_sent_midstream_lands_at_the_next_boundary_not_during_the_call
             text: "go".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     while sent.lock().unwrap().is_empty() {
@@ -260,6 +264,7 @@ async fn a_message_sent_midstream_lands_at_the_next_boundary_not_during_the_call
             text: "queued midstream".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
 
@@ -338,6 +343,7 @@ async fn an_image_queued_midturn_ingests_with_its_text() {
             text: "go".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     while sent.lock().unwrap().is_empty() {
@@ -353,6 +359,7 @@ async fn an_image_queued_midturn_ingests_with_its_text() {
             text: "".into(),
             images: vec![png],
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     until_idle(&mut h).await;

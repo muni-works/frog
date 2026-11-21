@@ -1053,9 +1053,10 @@ final class Conversation {
                     turns[t].items[i].applied?.undone = .init(ok: ok, message: message)
                 }
             }
-        case .settingChange(let id, let value):
+        case .settingChange(let id, let value, let client):
             // Live only by the engine's word; a replay that carried one still changes nothing.
-            if !replaying { Conversation.applySetting?(id, value) }
+            // A change for another attached app (typed there) is that app's to apply.
+            if !replaying, client == nil || client == Op.clientID { Conversation.applySetting?(id, value) }
         case .itemGisted(let item, let gist):
             // A finished call's one-line summary, from the engine's side-model. It lands on the
             // row itself, so it survives a replay and a reload: nothing is cached here.

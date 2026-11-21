@@ -137,21 +137,39 @@ final class CloudLink: ConversationLink {
     private let encoder = JSONEncoder()
     /// What `init` was told: whether the caps it sent may offer Customize and notes.
     let top: Bool
+    /// Whether this link is the person's view of the conversation, which tells the engine this
+    /// app's capabilities and settings. A link opened only to do one thing (a rename) sends
+    /// neither: its caps would switch the features off for another app with the session open.
+    let speaks: Bool
+    /// Welcomes so far: every one after the first is a reconnect, perhaps to a new engine (a
+    /// sandbox woken from sleep), so the caps and settings go again (review 4, item 6).
+    private var welcomes = 0
+    /// What the last welcome sent, in order (tests read it).
+    private(set) var lastFlush: [Data] = []
 
     /// `connect: false` (tests): no socket; frames are fed to `take` instead.
     /// `top`: a session the person types in, not one another session started (Customize caps).
     /// Off unless the caller knows: parentage unknown is a child, sent no capability.
-    init(gateway: CloudGateway, session: String, after: UInt64 = 0, connect: Bool = true, top: Bool = false) {
+    /// `speaks: false`: a link that isn't the person's conversation (see `speaks`).
+    init(gateway: CloudGateway, session: String, after: UInt64 = 0, connect: Bool = true, top: Bool = false, speaks: Bool = true) {
         self.gateway = gateway
         id = session
         self.top = top
+        self.speaks = speaks
         lastSeq = after
         if connect { open() }
-        // As on the web: questions get a card; a preview pane would need the sandbox's network.
-        send(.setClientCaps(panes: false, ask: true, customize: ClientCaps.customize(top: top), notes: ClientCaps.notes(top: top)))
-        // The app's settings the engine reads (auto-note, and the ids a card may change), as a
-        // local engine gets them: not told, it doesn't note on its own.
-        if let values = Conversation.engineSettings?() { send(.settings(values: values)) }
+        queue.append(contentsOf: greetings())
+    }
+
+    /// What the engine is told on every connection: as on the web, questions get a card (a
+    /// preview pane would need the sandbox's network); and the app's settings the engine reads
+    /// (auto-note, and the ids a card may change), as a local engine gets them: not told, it
+    /// doesn't note on its own.
+    func greetings() -> [Data] {
+        guard speaks else { return [] }
+        var ops: [Op] = [.setClientCaps(panes: false, ask: true, customize: ClientCaps.customize(top: top), notes: ClientCaps.notes(top: top))]
+        if let values = Conversation.engineSettings?() { ops.append(.settings(values: values)) }
+        return ops.compactMap { try? encoder.encode($0) }
     }
 
     func send(_ op: Op) {
@@ -160,6 +178,8 @@ final class CloudLink: ConversationLink {
     }
 
     func stop() {
+        // This app's settings stop counting for the session's engine.
+        if speaks { send(.detach) }
         stopped = true
         task?.cancel(with: .normalClosure, reason: nil)
         end("Disconnected")
@@ -256,7 +276,11 @@ final class CloudLink: ConversationLink {
         live = true
         attempt = 0
         connection = nil
-        for d in queue { task?.send(.string(String(decoding: d, as: UTF8.self))) { _ in } }
+        welcomes += 1
+        // A reconnect: the engine may be a new one that was never told (a woken sandbox).
+        let again = welcomes > 1 ? greetings() : []
+        lastFlush = again + queue
+        for d in lastFlush { task?.send(.string(String(decoding: d, as: UTF8.self))) { _ in } }
         queue.removeAll()
         catchUp()
         if caughtUpAt != nil { quiet() }
@@ -292,9 +316,14 @@ final class CloudLink: ConversationLink {
         if let env = try? JSONDecoder().decode(Envelope.self, from: Data(idle.utf8)) { onEvent(env) }
     }
 
-    private func closed(_ code: Int) {
+    /// The socket went away; what's sent now waits for the next welcome.
+    func lost() {
         task = nil
         live = false
+    }
+
+    private func closed(_ code: Int) {
+        lost()
         guard !stopped, isAlive else { return }
         if code == 4001 { return end("Update Frog to continue") }
         if code == 4004 { return end("Session deleted") }
@@ -314,7 +343,7 @@ extension CloudLink {
     static func rename(_ id: String, to title: String, gateway: CloudGateway) {
         let t = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty else { return }
-        let link = CloudLink(gateway: gateway, session: id)
+        let link = CloudLink(gateway: gateway, session: id, speaks: false)
         link.send(.setTitle(t))
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(8))  // a sleeping sandbox wakes first

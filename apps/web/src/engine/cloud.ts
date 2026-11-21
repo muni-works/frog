@@ -16,8 +16,15 @@ export const CUSTOMIZE_CAPS = false
 // The same for noting on its own (`notes`): the noted line with Undo and Make it a rule draws,
 // held off with Customize.
 export const NOTES_CAPS = false
+const settingsOp = (): Op => ({ op: 'settings', values: customizableSettings(), client: CLIENT_ID })
+
 export const caps = (previews: boolean, top = true, customize = CUSTOMIZE_CAPS, notes = NOTES_CAPS): Op =>
   ({ op: 'set_client_caps', ask: true, panes: previews, ...(customize && top ? { customize: true } : {}), ...(notes && top ? { notes: true } : {}) })
+
+/** This page's id on the ops that say which app sent them (`submit`, `settings`, `detach`):
+ * several apps can share a cloud session, and its engine keeps each one's settings apart
+ * (review 4, item 5). One per page load. */
+export const CLIENT_ID = `web-${Math.random().toString(36).slice(2, 10)}`
 
 /** EngineClient over the Frog Cloud gateway: one websocket per subscribed session. */
 export class CloudEngine implements EngineClient {
@@ -34,7 +41,7 @@ export class CloudEngine implements EngineClient {
 
   constructor(readonly gateway: Gateway) {
     // A setting the engine reads changed here (auto-note): every open session hears it.
-    onSettings(() => this.conns.forEach((c) => c.send({ op: 'settings', values: customizableSettings() })))
+    onSettings(() => this.conns.forEach((c) => c.send(settingsOp())))
   }
 
   subscribe(session: string, after: number, onEnvelope: Parameters<EngineClient['subscribe']>[2], onReset?: () => void) {
@@ -42,19 +49,28 @@ export class CloudEngine implements EngineClient {
     const deliver: typeof onEnvelope = (env) => {
       if (env.event === 'pane_request') this.preview(session).request(env)
       // A setting this app owns, changed from the conversation (or put back by its Undo).
-      if (env.event === 'setting_change') applySetting(env.id, env.value)
+      // One typed in another app is that app's to apply.
+      if (env.event === 'setting_change' && (!env.client || env.client === CLIENT_ID)) applySetting(env.id, env.value)
       onEnvelope(env)
     }
-    const conn = this.gateway.connect(session, { onEnvelope: deliver, onReset, onState: (s) => this.watchers.forEach((w) => w(session, s)) }, after)
+    // Told on every welcome, a reconnect too: it may reach a new engine (a woken sandbox).
+    const greet = (): Op[] => [caps(this.previews === true, this.tops.has(session)), settingsOp()]
+    const conn = this.gateway.connect(session, { onEnvelope: deliver, onReset, greet, onState: (s) => this.watchers.forEach((w) => w(session, s)) }, after)
     this.conns.set(session, conn)
-    conn.send(caps(this.previews === true, this.tops.has(session)))
-    conn.send({ op: 'settings', values: customizableSettings() })
     for (const op of this.early.get(session) ?? []) conn.send(op) // Connection queues until its handshake
     this.early.delete(session)
-    return () => { conn.close(); if (this.conns.get(session) === conn) this.conns.delete(session) }
+    return () => {
+      // Its settings stop counting for the session's engine.
+      conn.send({ op: 'detach', client: CLIENT_ID })
+      conn.close()
+      if (this.conns.get(session) === conn) this.conns.delete(session)
+    }
   }
 
   send(session: string, op: Op) {
+    // A typed message says which app it's from: a setting change is planned only for one the
+    // app applies.
+    if (op.op === 'submit' && op.typed) op = { ...op, client: CLIENT_ID }
     const conn = this.conns.get(session)
     if (conn) conn.send(op)
     else this.early.set(session, [...(this.early.get(session) ?? []), op])

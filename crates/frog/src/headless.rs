@@ -63,6 +63,7 @@ pub(crate) fn submit(prompt: String) -> Op {
         images: Vec::new(),
         more: Vec::new(),
         typed: false,
+        client: None,
     }
 }
 

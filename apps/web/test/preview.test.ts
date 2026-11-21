@@ -383,7 +383,8 @@ test("the tool's open waits for the load, and a dead dev server is the answer", 
 
 test("the client says it hosts preview panes only once the gateway serves previews", () => {
   const sent: Record<string, unknown[]> = {};
-  const fake = { connect: (id: string) => ({ send: (op: unknown) => (sent[id] ??= []).push(op), close() {} }) };
+  // A welcome at once: what the engine is told on it (greet) goes first.
+  const fake = { connect: (id: string, h: { greet?: () => unknown[] }) => { for (const op of h.greet?.() ?? []) (sent[id] ??= []).push(op); return { send: (op: unknown) => (sent[id] ??= []).push(op), close() {} } } };
   const engine = new CloudEngine(fake as unknown as Gateway);
   const caps = (id: string) => sent[id].filter((o) => (o as Op).op === "set_client_caps");
   engine.subscribe("s1", 0, () => {});
