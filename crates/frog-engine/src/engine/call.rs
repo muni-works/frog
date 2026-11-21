@@ -523,6 +523,8 @@ impl Agent {
                 // After the piece's own item and delta, so a client has drawn them.
                 if count {
                     streamed.tokens_sent = Some(now);
+                    self.streaming_out
+                        .store(streamed.pace.approx(), std::sync::atomic::Ordering::Relaxed);
                     let at = ms(now.duration_since(sent));
                     self.emit(Event::OutputTokens {
                         turn: self.active_turn.unwrap_or_default(),
@@ -541,6 +543,9 @@ impl Agent {
             let cloud = crate::harness::is_cloud(&self.profile);
             let r = self.watch_call(r, watching, cloud, &piece, &anchor).await;
             drop(on_event);
+            // The call came back (answered or failed): nothing of it is in flight any more.
+            self.streaming_out
+                .store(0, std::sync::atomic::Ordering::Relaxed);
             let rest = filter.finish();
             if !quiet && !rest.is_empty() {
                 text(&mut streamed, rest);

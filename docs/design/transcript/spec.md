@@ -146,6 +146,19 @@ middle dots). Phase 3 adds the turn line at
 its right end. The web's `.turn-foot` and the Mac's footer become this; the web's `.turn-card`
 popover is replaced by the turn panel in phase 3 and stays until then.
 
+- **Every ended turn that used anything ends on its footer** (Cam, 2026-11-21: "if a turn was
+  interrupted, it should still show the post-turn response summary footer"): finished, stopped,
+  failed, out of credit, at a limit. A stopped turn's footer says **Stopped** first, in `muted`
+  like the model, and no other row says it; any other ending keeps its own words (the error, the
+  limit) above the footer. A turn that used nothing (stopped before any output) has no footer,
+  just "Stopped".
+- **What a stop cut off counts.** A model call stopped mid-stream never reports its usage, so
+  the engine sends its estimate (`usage.cut`: what had streamed, and the prompt it was sent).
+  The footer adds it in and its figures read "about 1,240 tokens", "about $0.02"; the hover
+  says the stopped call's share is counted from what had streamed.
+- **The stats become the footer in place.** Under a writing answer the stats sit where its
+  footer will (the footer's gap, not 2), so finishing swaps the words and moves nothing.
+
 ### Following
 
 Where the view goes as you send and the reply arrives, the same on both apps (Cam, 2026-11-19:
@@ -226,7 +239,8 @@ separator character, as the footer. Time shows after
 the first second. The token figure while a call is streaming is counted from what has arrived
 and is replaced by the provider's number when the call ends; it must never be shown as exact
 while it is a count of chunks (no decimals, and the hover says "so far"). While the answer
-writes there is no row and the same stats sit under the text.
+writes there is no row and the same stats sit under the text, where its footer will be (see "The
+footer").
 
 ### Hover and opening
 

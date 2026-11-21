@@ -180,6 +180,8 @@
 .tx .turn-foot .turn-plate { border: 0; background: transparent; color: inherit; font: inherit; padding: 0; margin: 0; border-radius: var(--radius-plate); cursor: pointer; }
 .tx .turn-foot .turn-plate:hover, .tx .turn-foot .turn-plate[aria-expanded="true"] { color: var(--muted); background: var(--hover); box-shadow: 0 0 0 var(--space-tight) var(--hover); }
 .tx .turn-foot .hover-acts { margin-left: 0; height: var(--tx-meta-line); align-items: center; }
+/* An ending that says what happened (an error, a limit) above the turn's footer. */
+.tx .turn > .turn-end-foot { margin-top: var(--gap-footer); }
 .tx .turn-note { margin-top: var(--gap-block); font-size: var(--tx-status-size); line-height: var(--tx-status-line); color: var(--muted); white-space: normal; }
 
 /* The live row (spec, "The row"): one row at the end of the running turn, a line's height, its
@@ -187,7 +189,9 @@
  * sit 2 under it in meta. A step or a card holds still; only thinking breathes. */
 .tx .reply-block > [data-row="line"] + [data-row="live"] { margin-top: 0; }
 .tx .reply-block > [data-row="prose"] + [data-row="live"] { margin-top: var(--gap-activity); }
-.tx .reply-block > [data-row="prose"] + [data-row="stats"] { margin-top: var(--gap-stats); }
+/* Under a writing answer the stats sit where its footer will (the footer's gap), so finishing
+ * swaps the words and moves nothing (spec, "The stats line"). */
+.tx .reply-block > [data-row="prose"] + [data-row="stats"] { margin-top: var(--gap-footer); }
 .tx .reply-block > [data-row="live"]:first-child { margin-top: 0; }
 /* The live row is a line (its dot on the line, its words and stats a mark column in); the stats
  * under a writing answer sit under its prose, on the line. */

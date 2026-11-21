@@ -789,58 +789,87 @@ struct EndView: View {
     var answer: String = ""
     var hovering = false
     @Environment(\.models) private var models
+    @Environment(\.turnSpace) private var space
 
+    /// Every ended turn that used anything ends on its footer (Cam, 2026-11-21: an interrupted
+    /// turn keeps its summary): a stopped one says "Stopped" in it; any other ending says
+    /// what happened above it.
     var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ending
+            if let usage, usage.used {
+                footerLine(usage)
+                    .padding(.top, Self.footerLeads(reason, usage) ? 0 : space.footer)
+            }
+        }
+    }
+
+    /// The footer is the first thing this ending draws (a finished or stopped turn's).
+    static func footerLeads(_ reason: EndReason, _ usage: TurnUsage?) -> Bool {
         switch reason {
-        case .complete, .denied:
-            if let usage, usage.modelCalls > 0 {
-                // One meta line (docs/design/transcript/spec.md, "The footer"): the model in
-                // muted, Frog Cloud when it served the turn, then time, tokens written and cost,
-                // set off by middle dots. The cost opens its working (PriceCard).
-                HStack(spacing: 0) {
-                    let line = Self.footer(usage, models: models)
-                    ForEach(Array(line.enumerated()), id: \.offset) { i, part in
-                        if i > 0 { Color.clear.frame(width: 10) }
-                        switch part {
-                        case .model(let name):
-                            Text(name).foregroundStyle(Tokens.textSecondary).metricsFirstWord()
-                        case .text(let words, let help):
-                            Text(words).help(help)
-                        case .cost(let c):
-                            if let turn, let focus {
-                                // The turn panel has the working now (spec phase 3).
-                                Button(ModelStats.money(c)) { focus.panel = turn.id }
-                                    .buttonStyle(.plain).help("Open this turn")
-                            } else {
-                                PriceHint(cost: c, usage: usage)
-                            }
-                        }
-                    }
-                    if showEnergy, let e = usage.energy {
-                        Color.clear.frame(width: 10)
-                        EnergyHint(energy: e, usage: usage)
-                    }
-                    if !answer.isEmpty {
-                        MessageAction(title: "Copy answer", symbol: "doc.on.doc") {
-                            Clipboard.copy(answer)
-                        }
-                        .padding(.leading, TurnSpace.Inset.row)
-                        .opacity(hovering ? 1 : 0)
-                    }
-                    Spacer(minLength: 8)
-                    if let turn, !turn.timeline.segments().isEmpty {
-                        TurnLine(turn: turn)
+        case .complete, .denied: true
+        case .cancelled: usage?.used == true
+        default: false
+        }
+    }
+
+    @ViewBuilder
+    private func footerLine(_ usage: TurnUsage) -> some View {
+        // One meta line (docs/design/transcript/spec.md, "The footer"): "Stopped" for a stopped
+        // turn and the model in muted, Frog Cloud when it served the turn, then time, tokens
+        // written and cost, 10 apart. The cost opens the turn panel.
+        HStack(spacing: 0) {
+            let line = Self.footer(usage, reason: reason, models: models)
+            ForEach(Array(line.enumerated()), id: \.offset) { i, part in
+                if i > 0 { Color.clear.frame(width: 10) }
+                switch part {
+                case .model(let name):
+                    Text(name).foregroundStyle(Tokens.textSecondary).metricsFirstWord()
+                case .text(let words, let help):
+                    Text(words).help(help)
+                case .cost(let c):
+                    if let turn, let focus {
+                        // The turn panel has the working now (spec phase 3).
+                        Button(ModelStats.money(c)) { focus.panel = turn.id }
+                            .buttonStyle(.plain).help("Open this turn")
+                    } else {
+                        PriceHint(cost: c, usage: usage.spent)
                     }
                 }
-                .lineLimit(1)
-                .font(.frog(size: Tokens.Transcript.meta.size).monospacedDigit())
-                .foregroundStyle(Tokens.textTertiary)
-                .frame(height: Tokens.Transcript.meta.line)
-                .metricsRow(.footer, Self.footer(usage, models: models).map(\.words).joined(separator: ", "),
-                            key: "footer-\(usage.model ?? "")-\(usage.outputTokens)-\(usage.timing?.wallMs ?? 0)", fontSize: Tokens.Transcript.meta.size)
             }
+            if showEnergy, let e = usage.energy {
+                Color.clear.frame(width: 10)
+                EnergyHint(energy: e, usage: usage)
+            }
+            if !answer.isEmpty {
+                MessageAction(title: "Copy answer", symbol: "doc.on.doc") {
+                    Clipboard.copy(answer)
+                }
+                .padding(.leading, TurnSpace.Inset.row)
+                .opacity(hovering ? 1 : 0)
+            }
+            Spacer(minLength: 8)
+            if let turn, !turn.timeline.segments().isEmpty {
+                TurnLine(turn: turn)
+            }
+        }
+        .lineLimit(1)
+        .font(.frog(size: Tokens.Transcript.meta.size).monospacedDigit())
+        .foregroundStyle(Tokens.textTertiary)
+        .frame(height: Tokens.Transcript.meta.line)
+        .metricsRow(.footer, Self.footer(usage, reason: reason, models: models).map(\.words).joined(separator: ", "),
+                    key: "footer-\(usage.model ?? "")-\(usage.outputTokens)-\(usage.timing?.wallMs ?? 0)", fontSize: Tokens.Transcript.meta.size)
+    }
+
+    /// What happened, when it isn't a finished answer (or a stop the footer already says).
+    @ViewBuilder
+    private var ending: some View {
+        switch reason {
+        case .complete, .denied:
+            EmptyView()
         case .cancelled:
-            banner("Interrupted", symbol: "stop.circle", color: .secondary)
+            // "Stopped", as the footer and the web say it.
+            if usage?.used != true { banner("Stopped", symbol: "stop.circle", color: .secondary) }
         case .suspended:
             banner("Suspended for app update", symbol: "pause.circle", color: .secondary)
         case .maxTokens(let autoContinued):
@@ -889,18 +918,28 @@ struct EndView: View {
         }
     }
 
-    /// The footer's parts, in order: model, Frog Cloud, time, tokens written, cost.
-    static func footer(_ usage: TurnUsage, models: [ModelEntry]) -> [FooterPart] {
+    /// The footer's parts, in order: "Stopped" (a stopped turn), model, Frog Cloud, time,
+    /// tokens written, cost. A call stopped mid-stream is in the figures as estimated, so they
+    /// read "about" (the web's TurnFooter).
+    static func footer(_ usage: TurnUsage, reason: EndReason = .complete, models: [ModelEntry]) -> [FooterPart] {
         var out: [FooterPart] = []
+        if case .cancelled = reason { out.append(.model("Stopped")) }
         if let spec = usage.model { out.append(.model(ModelIdentity.of(spec, in: models).name)) }
         // Who served a Frog Cloud turn reads as Frog Cloud, whoever's GPUs answered (Cam, 2026-11-12).
         if let s = usage.servedBy { out.append(.model(s.displayName)) }
         if let ms = usage.timing?.wallMs { out.append(.text(seconds(ms), help: "Wall time for this turn")) }
-        if usage.outputTokens > 0 {
-            out.append(.text("\(usage.outputTokens.formatted(.number.grouping(.automatic).locale(Locale(identifier: "en_US")))) tokens",
-                             help: "\(usage.outputTokens.tokens) tokens written, \(usage.inputTokens.tokens) read"))
+        let about = usage.cut != nil ? "about " : ""
+        let spent = usage.spent
+        if spent.outputTokens > 0 {
+            out.append(.text("\(about)\(spent.outputTokens.formatted(.number.grouping(.automatic).locale(Locale(identifier: "en_US")))) tokens",
+                             help: usage.cut != nil
+                                ? "About \(spent.outputTokens.tokens) tokens written, \(spent.inputTokens.tokens) read: the stopped call's are counted from what had streamed"
+                                : "\(spent.outputTokens.tokens) tokens written, \(spent.inputTokens.tokens) read"))
         }
-        if let c = ModelStats.shared.cost(of: usage) { out.append(.cost(c)) }
+        // "<$0.01" already says it's a rough figure: no "about" in front of it.
+        if let c = ModelStats.shared.cost(of: spent) {
+            out.append(usage.cut != nil && c >= 0.01 ? .text("about \(ModelStats.money(c))", help: "Estimated: the stopped call's share is from what had streamed") : .cost(c))
+        }
         return out
     }
 
