@@ -1418,8 +1418,9 @@ struct CompactSessionRow<Menu: View>: View {
 
     var body: some View {
         #if DEBUG
-        let _ = SidebarProbe.rowBodies += 1
-        let _ = expandTitle ? SidebarProbe.expandedBodies += 1 : ()
+        let probed = SidebarProbe.counts(session.id)
+        let _ = probed ? SidebarProbe.rowBodies += 1 : ()
+        let _ = probed && expandTitle ? SidebarProbe.expandedBodies += 1 : ()
         #endif
         content(working: live == nil && SidebarClock.shared.now.timeIntervalSince(session.modifiedDate) < 30)
         .padding(.vertical, expandTitle ? 4 : 0)
@@ -1450,8 +1451,14 @@ struct CompactSessionRow<Menu: View>: View {
         // A pass of the pointer doesn't reflow the list; resting on a row does.
         .task(id: hovered) {
             guard hovered else { expandTitle = false; return }
+            #if DEBUG
+            if SidebarProbe.counts(session.id) { SidebarProbe.hoverStarted = Date() }
+            #endif
             try? await Task.sleep(for: .milliseconds(450))
             guard !Task.isCancelled, hovered else { return }
+            #if DEBUG
+            if SidebarProbe.counts(session.id) { SidebarProbe.expandedAt = Date() }
+            #endif
             withAnimation(.snappy(duration: 0.15)) { expandTitle = true }
         }
         // Queued off the main thread (at most once a minute); no gh, no git in the row.
@@ -1516,8 +1523,9 @@ struct CompactSessionRow<Menu: View>: View {
             // hover-only (the title may truncate a little sooner — that's the honest trade).
             if let git {
                 #if DEBUG
-                let _ = SidebarProbe.badgeBodies += 1
-                let _ = expandTitle ? SidebarProbe.expandedBadgeBodies += 1 : ()
+                let probed = SidebarProbe.counts(session.id)
+                let _ = probed ? SidebarProbe.badgeBodies += 1 : ()
+                let _ = probed && expandTitle ? SidebarProbe.expandedBadgeBodies += 1 : ()
                 #endif
                 GitBadgeView(display: git.display, muted: !running && !selected, help: git.help, card: git.card)
                     .padding(.leading, 5)
