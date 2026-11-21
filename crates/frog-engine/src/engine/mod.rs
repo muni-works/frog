@@ -1964,6 +1964,8 @@ struct Agent {
     /// power to subtract).
     meter: Option<crate::energy::Meter>,
     energy_mark: Option<(crate::energy::Mark, Option<f64>)>,
+    /// `power_limit_w`: the budget local model calls wait on. Top-level only, like the meter.
+    throttle: Mutex<Option<crate::energy::Throttle>>,
     root: PathBuf,
     system: String,
     specs: Vec<ToolSpec>,
@@ -2360,6 +2362,7 @@ impl Agent {
             sent: Mutex::default(),
             meter: None,
             energy_mark: None,
+            throttle: Mutex::new(None),
             root: o.cwd,
             system,
             specs: tools::specs(),
@@ -2458,6 +2461,12 @@ impl Agent {
         if agent.cfg.energy && !agent.subagent {
             agent.meter = crate::energy::Meter::new();
             agent.meter_busy(true);
+            if agent.meter.is_some() {
+                *agent.throttle.get_mut().unwrap() = agent
+                    .cfg
+                    .power_limit_w
+                    .and_then(crate::energy::Throttle::new);
+            }
         }
         Ok(agent)
     }

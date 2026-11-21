@@ -52,6 +52,9 @@ extension Conversation {
         // Always measured (a sensor read ten times a second), so "Show energy use" shows every
         // turn's figure the moment it's on, earlier turns included.
         args.append("--energy")
+        // Settings › Usage › Power limit; read as each engine starts.
+        let limit = UserDefaults.standard.double(forKey: ModelStats.powerLimitKey)
+        if limit > 0 { args += ["--power-limit", String(Int(limit))] }
         let engine = EngineProcess(binary: binary, cwd: folder, arguments: args)
         engine.onLine = { RemoteBridge.shared.forward($0) }
         do {

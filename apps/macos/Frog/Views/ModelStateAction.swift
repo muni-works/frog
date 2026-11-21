@@ -28,8 +28,8 @@ struct ModelStateAction: View {
             if let addKey { button("Add Key…") { addKey(model.providerID) } }
         case .notAllowed:
             if let askCloud { button("Allow…") { askCloud(model) } }
-        case .overCap:
-            // The monthly cap lives in Settings › Usage.
+        case .overCap, .overEnergyCap:
+            // Both caps live in Settings › Usage.
             button("Raise Cap…") {
                 showSettings?("usage")
             }

@@ -68,7 +68,8 @@ test("board 7's verdicts: 23 both plus Frog Cloud, 12 invite, 7 Mac plus Share u
   assert.deepEqual(ids("both"), ["notifications", "auto-note", "theme", "density", "detail", "playful", "sounds", "default-model", "machines", "frog-cloud", "default-mode", "shortcuts", "mcp-servers", "spent", "monthly-cap", "show-energy", "energy-chart", "profile", "sign-ins", "devices", "plan", "credit", "coupon", "credit-history", "prices"]);
   assert.deepEqual(ids("invite"), ["editor", "iphone", "pair-machine", "local-models", "machine-name", "share-models", "other-clouds", "servers", "sandbox", "computer-use", "mcp-sign-in", "measured-energy"]);
   // Plus "Share usage with Frog" (b5edfe37, after the canvas): the Mac app's own opt-in.
-  assert.deepEqual(ids("mac"), ["share-usage", "update-pause", "update-wait", "lend-battery", "pair-mac", "provider-models", "allowed-commands", "mcp-config"]);
+  // Plus the daily energy cap and power limit: this Mac's sensor, nothing a browser can hold.
+  assert.deepEqual(ids("mac"), ["share-usage", "update-pause", "update-wait", "lend-battery", "pair-mac", "provider-models", "allowed-commands", "mcp-config", "energy-cap", "power-limit"]);
   assert.deepEqual(ids("web"), ["cloud-sandbox"]);
 });
 
