@@ -263,18 +263,15 @@ enum SelfOpening {
 
 // MARK: - The left edge
 
-/// Where the transcript's text starts (spec, "Measure and the left edge"). A line's mark hangs
-/// `Layout.hang` into the gutter, so verbs, thoughts, the footer and prose share one edge. When
-/// the gutter is narrower than the hang (a narrow pane or split), marks come inside the column
-/// and every text row indents by the hang together.
+/// The column's gutter (spec, "One left line, flush"). Every row starts on the column's left
+/// line: a line's mark sits there and its words `Layout.hang` in; prose, the footer and a list's
+/// markers start on the line. Nothing hangs in the gutter, so a narrow pane only narrows it.
 struct TranscriptEdge: Equatable {
     var gutter: CGFloat
-    /// How far text rows start in from the column's edge: 0, or the hang in a narrow pane.
-    var indent: CGFloat
     /// Under 420 wide the turn line drops its curve and keeps the strip (spec phase 3).
     var narrowLine = false
 
-    static let hang = TranscriptEdge(gutter: Tokens.Transcript.Layout.gutter, indent: 0)
+    static let wide = TranscriptEdge(gutter: Tokens.Transcript.Layout.gutter)
 
     /// Panes narrower than this get the narrow gutter (the web's `INSET_BELOW`).
     static let insetBelow: CGFloat = 480
@@ -282,12 +279,12 @@ struct TranscriptEdge: Equatable {
     static func of(paneWidth: CGFloat) -> TranscriptEdge {
         let L = Tokens.Transcript.Layout.self
         let gutter = paneWidth < insetBelow ? L.gutterNarrow : L.gutter
-        return TranscriptEdge(gutter: gutter, indent: gutter < L.hang ? L.hang : 0, narrowLine: paneWidth < 420)
+        return TranscriptEdge(gutter: gutter, narrowLine: paneWidth < 420)
     }
 }
 
 extension EnvironmentValues {
-    @Entry var transcriptEdge = TranscriptEdge.hang
+    @Entry var transcriptEdge = TranscriptEdge.wide
 }
 
 // MARK: - Views
@@ -300,14 +297,13 @@ private enum LineType {
     static var result: Font { .frog(size: meta.size).monospacedDigit() }
 }
 
-/// A line's frame: the mark hung in the gutter, the plate on hover, the row's height. Shared by
-/// steps, folds and thoughts so they line up.
+/// A line's frame: the mark on the column's line, the words one mark column in, the plate on
+/// hover, the row's height. Shared by steps, folds, thoughts and the live row so they line up.
 struct LineFrame<Mark: View, Content: View>: View {
     var hovered: Bool
     @ViewBuilder var mark: Mark
     @ViewBuilder var content: Content
     @Environment(\.turnSpace) private var space
-    @Environment(\.transcriptEdge) private var edge
 
     var body: some View {
         let L = Tokens.Transcript.Layout.self
@@ -320,15 +316,14 @@ struct LineFrame<Mark: View, Content: View>: View {
                     .padding(.horizontal, -L.plateBleed)
                     .opacity(hovered ? 1 : 0)
             }
+            .padding(.leading, L.hang)
             .overlay(alignment: .leading) {
-                // Hung by layout, not `offset` (a drawing shift), so its frame is where it draws.
+                // On the line, the glyph at its box's left (a chevron turns about its own centre).
                 mark
-                    .frame(width: L.mark, height: L.mark)
+                    .frame(width: L.mark, height: L.mark, alignment: .leading)
                     .foregroundStyle(Tokens.textTertiary)
-                    .metricsEdge("mark", claims: ["hung"])
-                    .alignmentGuide(.leading) { $0[.leading] + L.hang }
+                    .metricsEdge("mark", claims: ["box", "before"])
             }
-            .padding(.leading, edge.indent)
             .contentShape(.rect)
     }
 }
@@ -372,7 +367,7 @@ struct StepLineView: View {
                 row(line)
                 if open, opens(line) {
                     OpenedStep(item: item, line: line, conversation: conversation)
-                        .padding(.leading, edgeIndent)
+                        .padding(.leading, Tokens.Transcript.Layout.hang)
                         .transition(.opacity)
                 }
             }
@@ -383,9 +378,7 @@ struct StepLineView: View {
         }
     }
 
-    @Environment(\.transcriptEdge) private var edge
     @Environment(\.turnFocus) private var focus
-    private var edgeIndent: CGFloat { edge.indent }
 
     private func row(_ line: StepLine) -> some View {
         Button {
@@ -475,7 +468,7 @@ struct OpenedStep: View {
                         Text(n).frame(height: Tokens.Transcript.status.line)
                     }
                 }
-                .metricsEdge("opened: failing tests", claims: ["text"], kind: "line:\(line.kind.metricsName)", text: names.joined(separator: " "))
+                .metricsEdge("opened: failing tests", claims: ["after"], kind: "line:\(line.kind.metricsName)", text: names.joined(separator: " "))
                 .font(.frog(size: Tokens.Transcript.status.mono, design: .monospaced))
                 .foregroundStyle(Tokens.text)
                 .accessibilityLabel("Failing tests")
@@ -535,11 +528,11 @@ struct OpenedStep: View {
                 .frame(maxHeight: 320)
                 .fixedSize(horizontal: false, vertical: true)
                 .background(Tokens.well, in: .rect(cornerRadius: TurnSpace.Card.nestedRadius))
-                .metricsEdge("opened: output box", claims: ["text", "right"], kind: "line:\(line.kind.metricsName)")
+                .metricsEdge("opened: output box", claims: ["after", "right"], kind: "line:\(line.kind.metricsName)")
             }
             HStack(spacing: TurnSpace.Inset.row) {
                 Text(conversation.cloudSession != nil ? "Ran in your Frog Cloud sandbox" : "Ran on this Mac")
-                    .metricsEdge("opened: caption", claims: ["text"], kind: "line:\(line.kind.metricsName)",
+                    .metricsEdge("opened: caption", claims: ["after"], kind: "line:\(line.kind.metricsName)",
                                  text: conversation.cloudSession != nil ? "Ran in your Frog Cloud sandbox" : "Ran on this Mac")
                 if lines.count > Self.tail {
                     Button(all ? "Show less" : "Show all \(lines.count) lines") { all.toggle() }
@@ -610,7 +603,6 @@ struct FoldLineView: View {
 /// A thought: one quiet line with a chevron, opening to what it thought. Today's words ("Thought
 /// for 12s"); phase 2 replaces the row.
 struct ThoughtLineView: View {
-    @Environment(\.transcriptEdge) private var edge
     let item: ItemState
     var gist: String?
     /// Verbose shows the thought: it opens (and closes) with the setting.
@@ -668,7 +660,7 @@ struct ThoughtLineView: View {
                         key: item.id, fontSize: LineType.status.size)
             if open {
                 ThinkingOutline(item: item)
-                    .padding(.leading, edge.indent)
+                    .padding(.leading, Tokens.Transcript.Layout.hang)
                     .padding(.bottom, TurnSpace.Inset.snug)
                     .transition(.opacity)
             }

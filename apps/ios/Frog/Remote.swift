@@ -190,7 +190,8 @@ final class Remote {
         case "stats":
             // The Mac's spend and energy record; the phone records nothing of its own.
             if let st = msg["stats"].flatMap({ try? JSONSerialization.data(withJSONObject: $0) }) {
-                ModelStats.shared.adopt(st, cap: msg["cap"] as? Double ?? 0)
+                ModelStats.shared.adopt(st, cap: msg["cap"] as? Double ?? 0,
+                                        energyCap: msg["energy_cap"] as? Double ?? 0)
             }
             if UserDefaults.standard.object(forKey: ModelStats.energyKey) == nil, let show = msg["show_energy"] as? Bool {
                 UserDefaults.standard.set(show, forKey: ModelStats.energyKey)

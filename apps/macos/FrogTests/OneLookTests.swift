@@ -176,11 +176,10 @@ final class OneLookTests: XCTestCase {
         XCTAssertFalse(SelfOpening.opens("ok", StepLine.of(step("ok", "Bash", "ls"))!))
     }
 
-    /// The left edge: a mark hangs 26 into a 32 gutter; under 480 the gutter is 16 and text
-    /// indents by 26 instead.
+    /// The left edge: a 32 gutter, 16 under 480; nothing hangs in it, so that's all that changes.
     func testTheLeftEdge() {
-        XCTAssertEqual(TranscriptEdge.of(paneWidth: 1010), TranscriptEdge(gutter: 32, indent: 0))
-        XCTAssertEqual(TranscriptEdge.of(paneWidth: 479), TranscriptEdge(gutter: 16, indent: 26))
+        XCTAssertEqual(TranscriptEdge.of(paneWidth: 1010), TranscriptEdge(gutter: 32))
+        XCTAssertEqual(TranscriptEdge.of(paneWidth: 479), TranscriptEdge(gutter: 16))
     }
 
     func testDiagnosticNoticesStayOutOfTheComposer() {

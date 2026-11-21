@@ -53,11 +53,10 @@ final class TranscriptMetrics {
     func removeEdge(_ key: String) { edges[key] = nil }
 
     private(set) var rows: [String: Row] = [:]
-    /// The layout: pane and column widths, the gutter, and where the first line's mark is.
+    /// The layout: pane and column widths and the gutter.
     var pane: CGFloat = 0
     var column: CGFloat = 0
     var gutter: CGFloat = 0
-    var indent: CGFloat = 0
 
     func set(_ key: String, kind: Kind, text: String, box: CGRect, fontSize: CGFloat, sub: String? = nil) {
         var row = rows[key] ?? Row(kind: kind, text: text, box: box, fontSize: fontSize)
@@ -109,8 +108,8 @@ final class TranscriptMetrics {
             a.row.box.minY != b.row.box.minY ? a.row.box.minY < b.row.box.minY : a.row.box.minX < b.row.box.minX
         }
         let first: CGFloat = sorted.first?.row.box.minY ?? 0
-        // A line's mark box: hung `hang` into the gutter, or at the column's edge when text is inset.
-        let mark: CGFloat = indent - Tokens.Transcript.Layout.hang
+        // A line's mark box: on the column's line (spec, "One left line, flush").
+        let mark: CGFloat = 0
         let out: [String: Any] = [
             "format": "frog-transcript-metrics/1",
             "app": "mac",
@@ -126,7 +125,7 @@ final class TranscriptMetrics {
         return (try? JSONSerialization.data(withJSONObject: out, options: [.prettyPrinted, .sortedKeys])) ?? Data()
     }
 
-    /// The edges dump, `frog-transcript-edges/1` (docs/design/parity/edges.mjs has the format):
+    /// The edges dump, `frog-transcript-edges/2` (docs/design/parity/edges.mjs has the format):
     /// every element of the column with its left and right edge and the line it claims.
     func edgesJSON(width: CGFloat, height: CGFloat, look: String) -> Data {
         func r(_ v: CGFloat) -> Double { (Double(v) * 10).rounded() / 10 }
@@ -152,7 +151,11 @@ final class TranscriptMetrics {
             case .card: add(row.box.minY, kind, "box", row.text, row.box.minX, row.box.maxX, ["box", "right"])
                 add(row.box.minY, kind, "title (inside)", row.text, x, row.box.maxX, [], order: 1)
             case .turnline: add(row.box.minY, row.sub ?? "footer", "turn line (box)", "", row.box.minX, row.box.maxX, ["right"], order: 2)
-            default: add(row.box.minY, kind, "words", row.text, x, row.box.maxX, ["text"])
+            // A marked line's words: one mark column in. The stats under the live row go with them.
+            case .line, .fold, .thought, .live: add(row.box.minY, kind, "words", row.text, x, row.box.maxX, ["after"])
+            case .stats: add(row.box.minY, kind, "words", row.text, x, row.box.maxX, [row.sub == "after" ? "after" : "text"])
+            // A list item's words: one marker column in (a nested one's further, unclaimed).
+            default: add(row.box.minY, kind, "words", row.text, x, row.box.maxX, kind == "list item" ? ["item"] : kind.hasPrefix("list item") ? [] : ["text"])
             }
         }
         for e in edges.values {
@@ -163,11 +166,10 @@ final class TranscriptMetrics {
             add(row?.box.minY ?? box.minY, kind, e.part, e.text, box.minX, box.maxX, e.claims, order: 1)
         }
         let sorted = out.sorted { $0.y != $1.y ? $0.y < $1.y : $0.order < $1.order }
-        // A line's mark hangs `hang` into the gutter, or sits at the column's edge when text is inset.
         let doc: [String: Any] = [
-            "format": "frog-transcript-edges/1", "app": "mac",
+            "format": "frog-transcript-edges/2", "app": "mac",
             "width": r(width), "height": r(height), "look": look,
-            "column": r(column), "indent": r(indent),
+            "column": r(column), "hang": r(Tokens.Transcript.Layout.hang), "marker": r(Tokens.Transcript.Layout.marker),
             "elements": sorted.map(\.v),
         ]
         return (try? JSONSerialization.data(withJSONObject: doc, options: [.prettyPrinted, .sortedKeys])) ?? Data()

@@ -342,6 +342,33 @@ struct CapRow: View {
     }
 }
 
+/// A menu of watt-hours or watts from the row's options, kept under `key`; 0 is none.
+struct WattMenuRow: View {
+    let row: SettingsCatalog.Row
+    let key: String
+    let unit: String
+    let help: String
+    @AppStorage private var value: Double
+
+    init(row: SettingsCatalog.Row, key: String, unit: String, help: String) {
+        self.row = row
+        self.key = key
+        self.unit = unit
+        self.help = help
+        _value = AppStorage(wrappedValue: 0, key)
+    }
+
+    var body: some View {
+        let options = row.options ?? []
+        SettingsRow(row) {
+            FrogPillMenu(title: options.first { Double($0.id) == value }?.label ?? (value > 0 ? "\(Int(value)) \(unit)" : "None"),
+                         help: help) {
+                ForEach(options, id: \.id) { o in Button(o.label) { value = Double(o.id) ?? 0 } }
+            }
+        }
+    }
+}
+
 /// Energy by period and model: this Mac measured from its power sensor, a cloud model's data
 /// center estimated. The chart and the per-model lines from Usage's old Energy tab.
 struct EnergyRows: View {

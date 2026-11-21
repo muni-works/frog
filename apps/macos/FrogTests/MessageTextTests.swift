@@ -38,15 +38,15 @@ final class MessageTextTests: XCTestCase {
         board.releaseGlobally()
     }
 
-    /// In a reply a top-level marker hangs in the gutter: it's kept in the copied text, with a
-    /// space, though it takes no room in the line.
-    func testCopyAHungList() throws {
+    /// In a reply a list's markers start on the column's line: copied, each reads as its marker
+    /// and a tab before the words, as a boxed list's do.
+    func testCopyAFlushList() throws {
         let view = MessageTextView(usingTextLayoutManager: false)
-        view.show([.bullet(indent: 0, marker: "•", text: "one"), .bullet(indent: 0, marker: "2.", text: "two")], hang: true)
+        view.show([.bullet(indent: 0, marker: "•", text: "one"), .bullet(indent: 0, marker: "2.", text: "two")], flush: true)
         view.selectAll(nil)
         let board = NSPasteboard(name: NSPasteboard.Name("frog-test-\(UUID().uuidString)"))
         XCTAssertTrue(view.writeSelection(to: board, types: [.string]))
-        XCTAssertEqual(try XCTUnwrap(board.string(forType: .string)), "• one\n2. two")
+        XCTAssertEqual(try XCTUnwrap(board.string(forType: .string)), "•\tone\n2.\ttwo")
         board.releaseGlobally()
     }
 

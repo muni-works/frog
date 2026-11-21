@@ -3,9 +3,10 @@ import SwiftUI
 import XCTest
 @testable import Frog
 
-/// Two lines down the conversation column (docs/design/transcript/spec.md, "Measure and the left
-/// edge"): every row's text starts on the column's left edge, everything that reaches the right
-/// ends on its right edge, and marks hang in the gutter. The edge fixture
+/// Two lines down the conversation column (docs/design/transcript/spec.md, "One left line,
+/// flush" and "Two lines"): every row starts on the column's left line (a line's mark, a list's
+/// marker, prose), a marked line's words one mark column in and a list item's one marker column
+/// in, and everything that reaches the right ends on its right edge. The edge fixture
 /// (docs/design/parity/edges.jsonl, every kind of row, from edges-fixture.mjs) is fed to a hosted
 /// pane laid out as `PaneView` lays it out (the transcript with the composer in its bottom inset),
 /// the transcript's metrics hooks report each element (`TranscriptMetrics.edgesJSON`, the format
@@ -14,19 +15,21 @@ import XCTest
 ///
 /// 2026-11-18: the composer sat 32 pt inside the column on both sides (the gutter applied twice),
 /// an opening code chip pushed its paragraph 4 pt in, list items started 22 pt in behind their
-/// bullets, and the footer's turn line stopped 3 pt short.
+/// bullets, and the footer's turn line stopped 3 pt short. 2026-11-21: marks and list markers
+/// moved from the gutter onto the left line (Cam).
+
 @MainActor
 final class TranscriptEdgesTests: XCTestCase {
     /// The kinds the fixture draws: check-edges.mjs's REQUIRED.
     static let required = [
         "prompt", "thought", "fold", "line:command", "line:edit", "line:search", "line:web", "line:other",
-        "prose", "prose (opens with code)", "heading", "list item", "code", "table", "visual", "footer",
+        "prose", "prose (opens with code)", "heading", "list item", "list marker", "code", "table", "visual", "footer",
         "error", "question card", "card", "live", "stats", "composer",
     ]
     static let tolerance = 0.5
 
     struct Element: Decodable { let kind, part, text: String; let left, right: Double; let claims: [String] }
-    struct Dump: Decodable { let column, indent: Double; let elements: [Element] }
+    struct Dump: Decodable { let format: String; let column, hang, marker: Double; let elements: [Element] }
 
     override func setUp() async throws {
         TranscriptMetrics.enabled = true
@@ -107,15 +110,16 @@ final class TranscriptEdgesTests: XCTestCase {
 
     /// check-edges.mjs's rules: each claim on its line, and every kind present.
     static func problems(_ d: Dump) -> [String] {
-        var out: [String] = []
+        var out: [String] = d.format == "frog-transcript-edges/2" ? [] : ["unknown format \(d.format)"]
         for e in d.elements {
             for claim in e.claims {
                 let off: Double = switch claim {
-                case "text": e.left - d.indent
-                case "box": e.left
+                case "text", "box": e.left
+                case "after": e.left - d.hang
+                case "item": e.left - d.marker
+                case "before": max(0, e.right - d.hang)
                 case "right": e.right - d.column
-                case "hung": max(0, e.right - d.indent)
-                default: 0
+                default: .infinity
                 }
                 if abs(off) > tolerance { out.append("\(e.kind) \(e.part) \"\(e.text)\": \(claim) off by \((off * 10).rounded() / 10)") }
             }
@@ -123,6 +127,32 @@ final class TranscriptEdgesTests: XCTestCase {
         let seen = Set(d.elements.map(\.kind))
         for k in required where !seen.contains(k) { out.append("no \(k) in the dump") }
         return out
+    }
+
+    /// For the PR (`FROG_EDGES_OUT` only): the fixture's first turn (a fold, the tool rows, a
+    /// list) as a picture. Only that turn: `cacheDisplay` draws blank once a card is up.
+    func testPictureOfTheFirstTurn() throws {
+        guard let out = ProcessInfo.processInfo.environment["FROG_EDGES_OUT"] else { throw XCTSkip("FROG_EDGES_OUT not set") }
+        let c = Conversation(folder: URL(fileURLWithPath: "/tmp/frog-edges-tests"), link: nil, replay: false, session: "edges")
+        let size = CGSize(width: 1030, height: 2300)
+        let host = NSHostingView(rootView: TranscriptView(conversation: c, actions: TurnActions(fork: { _ in }, rewind: { _ in }))
+            .frame(width: size.width, height: size.height).background(Tokens.canvas))
+        host.frame = CGRect(origin: .zero, size: size)
+        let w = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        w.isReleasedWhenClosed = false
+        w.appearance = NSAppearance(named: .darkAqua)
+        w.contentView = host
+        w.orderInForTest()
+        defer { w.close() }
+        let all = try fixture()
+        let end = try XCTUnwrap(all.firstIndex { if case .turnEnded = $0.event { true } else { false } })
+        for env in all[...end] { c.ingest(env) }
+        pump(2.5)
+        host.layoutSubtreeIfNeeded()
+        pump(0.5)
+        let rep = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: rep)
+        try rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: "\(out)/turn1-mac-1030.png"))
     }
 
     /// The pane of a 1280-wide window with the sidebar open.
@@ -139,11 +169,9 @@ final class TranscriptEdgesTests: XCTestCase {
         XCTAssertEqual(p, [], "\(p.count) off:\n" + p.joined(separator: "\n"))
     }
 
-    /// Under 480 (`TranscriptEdge.insetBelow`): the narrow gutter, marks come inside and all text
-    /// indents by the hang together; boxes and the composer keep the column's edges.
+    /// Under 480 (`TranscriptEdge.insetBelow`): the narrow gutter, and nothing else moves.
     func testAndInAPaneUnder480() throws {
         let d = try measure(width: 440)
-        XCTAssertEqual(d.indent, Tokens.Transcript.Layout.hang, accuracy: 0.01, "text indents by the hang")
         let p = Self.problems(d)
         XCTAssertEqual(p, [], "\(p.count) off:\n" + p.joined(separator: "\n"))
     }
