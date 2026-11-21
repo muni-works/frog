@@ -97,6 +97,53 @@ export function stableCut(src: string): number {
   return text === src ? cut : 0
 }
 
+/** What a streaming reply shows of `src`: its end held back while it's half-finished markdown (an
+ * unclosed `code`, **bold**, ~~strike~~ or [link](…), a list or heading marker alone, a fence
+ * half typed), so nothing shows raw and then changes. Only the last block is looked at; inside an
+ * open code fence the code shows as it arrives. The cases are docs/design/transcript/holdback.json,
+ * which the Mac's `Markdown.settled` runs too. */
+export function settled(src: string): string {
+  const lines = src.split('\n')
+  let fence: string | null = null, block = 0, pos = 0
+  lines.forEach((line, i) => {
+    if (i < lines.length - 1) {
+      const f = line.match(/^\s*(`{3,}|~{3,})/)
+      if (fence) { if (f && line.trimStart().startsWith(fence)) fence = null }
+      else if (f) fence = f[1]
+      if (!fence && line.trim() === '') block = pos + line.length + 1
+    }
+    pos += line.length + 1
+  })
+  const lineStart = src.lastIndexOf('\n') + 1
+  const last = src.slice(lineStart)
+  if (fence) return /^\s*(`{1,3}|~{1,3})$/.test(last) ? src.slice(0, lineStart) : src
+  if (last.trim() && /^\s*(`{1,3}|~{1,3})[\w+-]*$/.test(last)) return src.slice(0, lineStart)
+  if (/^\s*([-*+]|\d{1,9}[.)]|#{1,6}|>)\s?$/.test(last)) return src.slice(0, lineStart)
+  // The last block, its code spans blanked so their insides don't count as markup.
+  const text = src.slice(block)
+  let plain = '', cut = text.length, i = 0
+  while (i < text.length) {
+    const run = /^`+/.exec(text.slice(i))
+    if (!run) { plain += text[i++]; continue }
+    const close = text.indexOf(run[0], i + run[0].length)
+    if (close < 0) { cut = i; break }
+    plain += ' '.repeat(close + run[0].length - i)
+    i = close + run[0].length
+  }
+  plain = plain.slice(0, cut)
+  for (const mark of ['**', '~~']) {
+    const at = [...plain.matchAll(new RegExp(mark.replace(/[*]/g, '\\$&'), 'g'))].map((m) => m.index!)
+    if (at.length % 2) cut = Math.min(cut, at[at.length - 1])
+  }
+  const open = plain.lastIndexOf('[')
+  if (open >= 0) {
+    const rest = plain.slice(open)
+    const close = rest.indexOf(']')
+    if (close < 0 || close === rest.length - 1 || (rest[close + 1] === '(' && !rest.slice(close).includes(')'))) cut = Math.min(cut, open)
+  }
+  return src.slice(0, block + cut)
+}
+
 /** A streaming reply's blocks: the part before the last safe cut is parsed once and reused while
  * only the tail grows. `cache` holds the last head and its blocks. */
 export function parseStreaming(src: string, cache: { head: string; blocks: Block[] }): Block[] {
@@ -160,10 +207,11 @@ function Code({ lang, text }: { lang: string; text: string }) {
 }
 
 /** Memoized on the text: a finished message isn't parsed again while another one streams. */
-export const Markdown = memo(function Markdown({ text }: { text: string }) {
+export const Markdown = memo(function Markdown({ text, streaming = false }: { text: string; /** Still arriving: half-finished markup at the end waits (`settled`). */ streaming?: boolean }) {
   // While it streams, only the last block is parsed again on each new token.
   const cache = useRef<{ head: string; blocks: Block[] }>({ head: '', blocks: [] })
-  const blocks = useMemo(() => parseStreaming(text, cache.current), [text])
+  const shown = streaming ? settled(text) : text
+  const blocks = useMemo(() => parseStreaming(shown, cache.current), [shown])
   return (
     <div className="md">
       {blocks.map((b, i) => {

@@ -96,17 +96,18 @@
 .tx .md table { font-size: calc(var(--tx-body-size) - var(--space-hair)); line-height: var(--tx-status-line); }
 .tx .md :is(th, td) { padding: var(--space-tight) var(--space-row); }
 .tx .md blockquote { padding-left: var(--space-roomy); }
-/* A writing reply's caret: at the end of its last line of words, never a line of its own, so
- * finishing changes nothing (spec, "A reply streams where it rests"). A reply that ends on a code
- * box or a table has none: a caret there would add a line inside the box. */
-.tx .say[data-writing] > .md > :is(p, h1, h2, h3, h4, h5, h6):last-child::after,
-.tx .say[data-writing] > .md > :is(ul, ol):last-child > li:last-child::after,
-.tx .caret {
-  /* It takes no room in the line (the negative margin), so it never pushes the last word over. */
-  --caret: 7px;
-  content: ""; display: inline-block; width: var(--caret); height: 14px; margin-left: var(--space-hair); margin-right: calc(-1 * (var(--caret) + var(--space-hair)));
-  vertical-align: -2px; background: var(--frog); animation: blink 1s steps(2) infinite;
-}
+/* A writing reply (ink.ts, as the Mac's InkReveal): the text the pen hasn't reached is laid out
+ * but clear, so nothing reflows as it reveals; fresh words ink in from frog green to their own
+ * colour, faint to full, in five steps; the pen is a soft green bar just past the last word that
+ * breathes while the model is quiet. Under reduced motion text simply appears, with no pen. */
+.tx .say { position: relative; }
+.tx .ink-pen { position: absolute; left: 0; top: 0; width: 3px; border-radius: 1.5px; background: var(--frog); opacity: 0; pointer-events: none; }
+.tx .say ::highlight(ink-hidden) { color: transparent; }
+.tx .say ::highlight(ink-1) { color: color-mix(in srgb, var(--frog) 20%, transparent); }
+.tx .say ::highlight(ink-2) { color: color-mix(in srgb, color-mix(in srgb, var(--frog) 51%, var(--fg)) 59%, transparent); }
+.tx .say ::highlight(ink-3) { color: color-mix(in srgb, color-mix(in srgb, var(--frog) 22%, var(--fg)) 83%, transparent); }
+.tx .say ::highlight(ink-4) { color: color-mix(in srgb, color-mix(in srgb, var(--frog) 6%, var(--fg)) 95%, transparent); }
+.tx .say ::highlight(ink-5) { color: color-mix(in srgb, var(--fg) 99%, transparent); }
 
 /* Lines (spec, "Lines"): one per step, a row's height tall; lines in a run touch. The plate bleeds
  * past the words on each side so nothing moves when it appears; the mark sits on the column's
@@ -245,10 +246,14 @@
 .tx .live-row[data-state="failed"] .live-dot { background: var(--faint); }
 .tx .live-row .start-retry { flex: none; margin-left: var(--space-tight); }
 
+/* A row that arrives while the turn runs fades in where it lands, as on the Mac (TurnView's
+ * FadeIn): opacity only, so nothing above it moves. The answer's first words fade in as the live
+ * row cuts away. A fold replaces lines already there, so it doesn't. */
+.tx .turn[data-running] > .reply-block > [data-row]:not([data-row="live"], [data-row="stats"], [data-kind="fold"]) { animation: tx-in 180ms ease-out both; }
+@keyframes tx-in { from { opacity: 0; } }
+
 @media (prefers-reduced-motion: reduce) {
-  .tx [data-state="on"] .live-dot, .tx .tool-spin, .tx .caret,
-  .tx .say[data-writing] > .md > :is(p, h1, h2, h3, h4, h5, h6):last-child::after,
-  .tx .say[data-writing] > .md > :is(ul, ol):last-child > li:last-child::after { animation: none; }
+  .tx [data-state="on"] .live-dot, .tx .tool-spin, .tx .turn[data-running] > .reply-block > [data-row] { animation: none; }
   .tx .live-row[data-kind="start"] { transition: none; }
   .tx .live-thought > .tf.tf-was { display: none; }
   .tx .live-thought > .tf.tf-now { animation: none; }
