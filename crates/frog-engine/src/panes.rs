@@ -1200,8 +1200,10 @@ impl Panes {
 
     /// Wait for a fresh shell to show its first prompt (its rc files can take a moment), so a
     /// command isn't typed into the startup noise. Shells without markers get a settle wait.
-    /// The marker comes before the prompt is drawn, so then wait for the drawing to stop too:
-    /// typed before the line editor starts, a command is echoed twice.
+    /// The marker comes before the prompt is drawn (bash expands PS1, a theme runs `git status`,
+    /// then the line editor starts), so then wait for the prompt itself to land after the
+    /// marker and for the drawing to stop: typed before the line editor starts, a command is
+    /// echoed twice. A prompt that prints nothing gets a longer quiet instead.
     ///
     /// A shell with markers waits for its marker, not for output to settle: an rc that prints
     /// and then works for a while (oh-my-zsh's update check fetches before it asks) goes quiet
@@ -1226,7 +1228,9 @@ impl Panes {
                 if g.exit.is_some() {
                     return;
                 }
-                if g.prompts > 0 && g.quiet_for() > Duration::from_millis(120) {
+                let drawn = g.mark() > g.prompt_mark;
+                let settle = Duration::from_millis(if drawn { 120 } else { 1000 });
+                if g.prompts > 0 && g.quiet_for() > settle {
                     return;
                 }
                 if !marks && g.received > 0 && g.quiet_for() > Duration::from_millis(700) {
@@ -1853,6 +1857,35 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(out.content.trim(), "hi-23", "{}", out.content);
+        panes.shutdown();
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    /// A prompt that takes a while to draw after its marker (a git-status theme; the marker
+    /// prints first, then the prompt is expanded and the line editor starts): a command typed in
+    /// that gap is echoed by the tty and again by the line editor. The command waits for the
+    /// prompt itself, and every run does, not only the first.
+    #[tokio::test]
+    async fn terminal_run_waits_for_a_slow_prompt_to_draw() {
+        let rc = "setopt prompt_subst 2>/dev/null\nPS1='$(sleep 1)> '\n";
+        let Some((panes, _rx, home)) = hermetic_shell(rc) else {
+            return;
+        };
+        for n in [1, 2] {
+            let out = panes
+                .terminal(
+                    &json!({ "action": "run", "command": format!("echo hi-$((20+{n}))"), "wait_ms": 15000 }),
+                    false,
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                out.content.trim(),
+                format!("hi-{}", 20 + n),
+                "{}",
+                out.content
+            );
+        }
         panes.shutdown();
         let _ = std::fs::remove_dir_all(home);
     }
