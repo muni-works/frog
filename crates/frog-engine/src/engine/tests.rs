@@ -15443,6 +15443,7 @@ async fn a_turn_stopped_mid_stream_reports_the_cut_off_call() {
             text: "why is it flaky?".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     let mut stopped = false;
@@ -15472,6 +15473,7 @@ async fn a_turn_stopped_mid_stream_reports_the_cut_off_call() {
             text: "again".into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .unwrap();
     loop {
