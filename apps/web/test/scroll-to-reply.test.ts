@@ -18,7 +18,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import WebSocket from "ws";
 import { startMock } from "./mock/mock-gateway.mjs";
-import { chrome, quietLogger } from "./chrome.ts";
+import { chrome, quietLogger, warm } from "./chrome.ts";
 import { open, pause, until, type Page } from "./cdp.ts";
 
 const skip = chrome ? false : "no Chrome on this machine";
@@ -40,6 +40,12 @@ let vite: { close: () => Promise<void> } | undefined;
 let origin = "";
 let session = "";
 let dir = "";
+// The setup's socket stays open: turns started and ended, so a test can wait for the session to
+// be idle. The mock plays a send at once even while a reply streams, and a test that sent while
+// the last test's long reply was still coming (a slow runner) got the two interleaved.
+let watch: WebSocket | undefined;
+let started = 0;
+let ended = 0;
 
 before(async () => {
   if (!chrome) return;
@@ -54,20 +60,26 @@ before(async () => {
   const { createServer } = await import("vite");
   const server = await createServer({ root: fileURLToPath(new URL("..", import.meta.url)), customLogger: await quietLogger(), server: { port, host: "127.0.0.1", strictPort: true } });
   await server.listen();
+  await warm(server, ["/parity/app.tsx"]);
   vite = server;
   origin = `http://127.0.0.1:${port}`;
   // A session with history: two finished turns, so the transcript is far taller than the window.
   const s = await (await fetch(`${api}/v1/sessions`, { method: "POST", headers: { authorization: `Bearer ${KEY}`, "content-type": "application/json" }, body: JSON.stringify({ repo: "ada/notes" }) })).json() as { id: string; ws: string };
   session = s.id;
   const ws = new WebSocket(s.ws, ["frog", `bearer.${KEY}`]);
-  const ended: (() => void)[] = [];
-  ws.on("message", (d) => { if (JSON.parse(String(d)).event === "turn_ended") ended.shift()?.(); });
+  watch = ws;
+  const waiting: (() => void)[] = [];
+  ws.on("message", (d) => {
+    const e = JSON.parse(String(d)).event;
+    if (e === "turn_started") started++;
+    if (e === "turn_ended") { ended++; waiting.shift()?.(); }
+  });
   await new Promise((r) => ws.on("open", r));
   ws.send(JSON.stringify({ hello: { protocol: 1, client: "scroll-test", resume_after: 1e9 } }));
-  for (const text of ["first", "second"]) await new Promise<void>((r) => { ended.push(r); ws.send(JSON.stringify({ op: "submit", text })); });
-  ws.close();
+  for (const text of ["first", "second"]) await new Promise<void>((r) => { waiting.push(r); ws.send(JSON.stringify({ op: "submit", text })); });
 });
 after(async () => {
+  watch?.terminate();
   await Promise.allSettled([vite?.close(), mock?.close()]);
   if (dir) rmSync(dir, { recursive: true, force: true });
 });
@@ -87,6 +99,7 @@ const sendMessage = async (p: Page, text: string) => {
 };
 
 async function session_(reducedMotion: boolean) {
+  assert.ok(await until(async () => started === ended, 30_000), `the last test's reply finished (${ended} of ${started} turns ended)`);
   const p = await open(`${origin}/parity/app.html?key=${KEY}&session=${session}&theme=dark`, 1200, 700, reducedMotion);
   assert.ok(await until(async () => (await p.eval<number>("document.querySelectorAll('.tx .me').length")) >= 2), "the session's history loaded");
   return p;

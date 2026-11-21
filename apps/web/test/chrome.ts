@@ -36,6 +36,14 @@ export async function quietLogger() {
   return logger;
 }
 
+/** Transform `entries` and everything they import, and wait for vite's crawl to end, before the
+ *  first page. On a fresh runner (no deps cache) the first page otherwise found deps mid-load,
+ *  vite re-optimized and reloaded it, and a test waiting for it ran out of time. */
+export async function warm(server: import("vite").ViteDevServer, entries: string[]) {
+  await Promise.all(entries.map((e) => server.warmupRequest(e)));
+  await server.waitForRequestsIdle();
+}
+
 /** `server.close` that waits on no one: every socket is destroyed, upgraded websockets too, which
  *  `closeAllConnections` doesn't know and a peer can leave half-open. Call before `listen`. */
 export function closer(server: Server): () => Promise<void> {

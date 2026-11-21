@@ -14,7 +14,7 @@ import { createServer, type Server } from "node:http";
 import { createServer as listen } from "node:net";
 import { fileURLToPath } from "node:url";
 import { accept } from "./mock/ws.mjs";
-import { chrome, closer, quietLogger } from "./chrome.ts";
+import { chrome, closer, quietLogger, warm } from "./chrome.ts";
 import { open, pause, until, type Page } from "./cdp.ts";
 
 const skip = chrome ? false : "no Chrome on this machine";
@@ -97,6 +97,7 @@ before(async () => {
   const { createServer: viteServer } = await import("vite");
   const server = await viteServer({ root: fileURLToPath(new URL("..", import.meta.url)), customLogger: await quietLogger(), server: { port, host: "127.0.0.1", strictPort: true } });
   await server.listen();
+  await warm(server, ["/parity/app.tsx"]);
   vite = server;
   origin = `http://127.0.0.1:${port}`;
 });
