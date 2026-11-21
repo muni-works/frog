@@ -15,11 +15,14 @@ export async function open(url: string, w: number, h: number, reducedMotion = fa
   const profile = mkdtempSync(join(tmpdir(), "frog-scroll-chrome-"));
   const linux = process.platform === "linux" ? ["--no-sandbox"] : [];
   const proc = spawn(chrome!, ["--headless=new", "--remote-debugging-port=0", `--user-data-dir=${profile}`, "--hide-scrollbars", ...linux, "about:blank"], { stdio: ["ignore", "ignore", "pipe"] });
+  const exited = new Promise<void>((r) => proc.once("exit", () => r()));
+  // The start timer is cleared once Chrome answers: left running, it held the file open 15 s.
+  let timer: NodeJS.Timeout | undefined;
   const wsUrl = await new Promise<string>((resolve, reject) => {
     let buf = "";
     proc.stderr!.on("data", (d) => { buf += d; const m = /DevTools listening on (ws:\/\/\S+)/.exec(buf); if (m) resolve(m[1]); });
-    setTimeout(() => reject(new Error("chrome didn't start")), 15000);
-  });
+    timer = setTimeout(() => reject(new Error("chrome didn't start")), 15000);
+  }).finally(() => clearTimeout(timer));
   const targets = await (await fetch(`http://127.0.0.1:${new URL(wsUrl).port}/json/list`)).json() as { type: string; webSocketDebuggerUrl: string }[];
   const ws = new WebSocket(targets.find((t) => t.type === "page")!.webSocketDebuggerUrl);
   await new Promise((r) => ws.on("open", r));
@@ -41,7 +44,16 @@ export async function open(url: string, w: number, h: number, reducedMotion = fa
     eval: evalJS, call,
     // Chrome's helpers can still be writing the profile after the browser exits (Linux CI:
     // ENOTEMPTY): retry, and never fail a test over a temp folder.
-    close: async () => { ws.close(); proc.kill(); await new Promise((r) => proc.once("exit", r)); try { rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); } catch { /* left in tmp */ } },
+    // Chrome that already died has no exit to wait for (`exited` caught it); one that ignores
+    // SIGTERM gets SIGKILL after 5 s.
+    close: async () => {
+      ws.terminate();
+      proc.kill();
+      const kill = setTimeout(() => proc.kill("SIGKILL"), 5000);
+      await exited;
+      clearTimeout(kill);
+      try { rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); } catch { /* left in tmp */ }
+    },
   };
 }
 
