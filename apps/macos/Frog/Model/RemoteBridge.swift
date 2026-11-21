@@ -450,6 +450,7 @@ final class RemoteBridge {
         let stats = ModelStats.shared
         guard let data = stats.exported, let json = try? JSONSerialization.jsonObject(with: data) else { return }
         let msg: [String: Any] = ["type": "stats", "stats": json, "cap": stats.monthlyCap,
+                                  "energy_cap": stats.dailyEnergyCap,
                                   "show_energy": UserDefaults.standard.bool(forKey: ModelStats.energyKey)]
         for c in clients where c.authed { c.send(msg) }
     }
