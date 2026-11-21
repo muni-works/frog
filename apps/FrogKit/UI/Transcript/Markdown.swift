@@ -17,6 +17,71 @@ enum TableAlign: Hashable {
 }
 
 enum Markdown {
+    /// What a streaming reply shows of `source`: its end held back while it's half-finished
+    /// markdown (an unclosed `code`, **bold**, ~~strike~~ or [link](…), a list or heading marker
+    /// alone, a fence half typed), so nothing shows raw and then changes. Only the last block is
+    /// looked at; inside an open code fence the code shows as it arrives. The cases are
+    /// docs/design/transcript/holdback.json, which the web's `settled` runs too.
+    static func settled(_ source: String) -> String {
+        let src = Array(source)
+        let lines = source.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        var fence: String?
+        var block = 0, pos = 0
+        for (i, line) in lines.enumerated() {
+            if i < lines.count - 1 {
+                let lead = line.drop(while: { $0 == " " || $0 == "\t" })
+                let f = lead.prefix(while: { $0 == "`" }).count >= 3 ? String(lead.prefix(while: { $0 == "`" }))
+                    : lead.prefix(while: { $0 == "~" }).count >= 3 ? String(lead.prefix(while: { $0 == "~" })) : nil
+                if let open = fence { if f != nil, lead.hasPrefix(open) { fence = nil } } else if let f { fence = f }
+                if fence == nil, line.trimmingCharacters(in: .whitespaces).isEmpty { block = pos + line.count + 1 }
+            }
+            pos += line.count + 1
+        }
+        let lineStart = (src.lastIndex(of: "\n").map { $0 + 1 }) ?? 0
+        let last = String(src[lineStart...])
+        func matches(_ pattern: String) -> Bool { last.range(of: pattern, options: .regularExpression) != nil }
+        let upToLine = String(src[..<lineStart])
+        if fence != nil { return matches(#"^\s*(`{1,3}|~{1,3})$"#) ? upToLine : source }
+        if !last.trimmingCharacters(in: .whitespaces).isEmpty, matches(#"^\s*(`{1,3}|~{1,3})[\w+-]*$"#) { return upToLine }
+        if matches(#"^\s*([-*+]|\d{1,9}[.)]|#{1,6}|>)\s?$"#) { return upToLine }
+        // The last block, its code spans blanked so their insides don't count as markup.
+        let text = Array(src[block...])
+        var plain: [Character] = []
+        var cut = text.count, i = 0
+        while i < text.count {
+            guard text[i] == "`" else { plain.append(text[i]); i += 1; continue }
+            var n = 0
+            while i + n < text.count, text[i + n] == "`" { n += 1 }
+            var j = i + n, close: Int?
+            while j + n <= text.count {
+                if text[j..<(j + n)].allSatisfy({ $0 == "`" }) { close = j; break }
+                j += 1
+            }
+            guard let close else { cut = i; break }
+            plain += Array(repeating: " ", count: close + n - i)
+            i = close + n
+        }
+        plain = Array(plain.prefix(cut))
+        for mark in [Array("**"), Array("~~")] {
+            var at: [Int] = [], k = 0
+            while k + 1 < plain.count {
+                if plain[k] == mark[0], plain[k + 1] == mark[1] { at.append(k); k += 2 } else { k += 1 }
+            }
+            if at.count % 2 == 1, let l = at.last { cut = min(cut, l) }
+        }
+        if let open = plain.lastIndex(of: "[") {
+            let rest = Array(plain[open...])
+            if let close = rest.firstIndex(of: "]") {
+                if close == rest.count - 1 || (close + 1 < rest.count && rest[close + 1] == "(" && !rest[close...].contains(")")) {
+                    cut = min(cut, open)
+                }
+            } else {
+                cut = min(cut, open)
+            }
+        }
+        return String(src[..<(block + cut)])
+    }
+
     /// Line-based block parser. Tolerates an unterminated code fence, since text streams in.
     static func parse(_ source: String) -> [MarkdownBlock] {
         var blocks: [MarkdownBlock] = []
@@ -210,9 +275,9 @@ final class MarkdownCache {
 }
 
 extension EnvironmentValues {
-    /// Markdown here is a reply in the transcript's column: a top-level list's markers hang in
-    /// the gutter, so its words start on the column's edge (spec, "Two lines"). The Mac reads it; the phone's text has no gutter.
-    @Entry var hangsListMarkers = false
+    /// Markdown here is a reply in the transcript's column: a list's markers start on the
+    /// column's line, left-aligned, its words one marker column in (spec, "Two lines").
+    @Entry var flushListMarkers = false
 }
 
 struct MarkdownView: View {
@@ -225,7 +290,8 @@ struct MarkdownView: View {
     var body: some View {
         // One selectable text view per stretch of the message; a diagram is a card of its own.
         VStack(alignment: .leading, spacing: space.block) {
-            ForEach(Array(Self.segments(cache.blocks(for: text)).enumerated()), id: \.offset) { _, segment in
+            // While it streams, half-finished markup at the end waits (`Markdown.settled`).
+            ForEach(Array(Self.segments(cache.blocks(for: streaming ? Markdown.settled(text) : text)).enumerated()), id: \.offset) { _, segment in
                 switch segment {
                 case .text(let blocks): MeasuredText(blocks: blocks, streaming: streaming)
                 case .mermaid(let code): MermaidBlock(code: code)

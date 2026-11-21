@@ -97,6 +97,9 @@ struct Cli {
     /// Measure each turn's energy from the Mac's power sensor, and report it with the turn.
     #[arg(long)]
     energy: bool,
+    /// Hold this Mac's draw above idle to an average of this many watts while local models run.
+    #[arg(long, value_name = "WATTS")]
+    power_limit: Option<f64>,
     /// A plain chat, not tied to a project: no file or shell tools.
     #[arg(long)]
     chat: bool,
@@ -463,6 +466,9 @@ async fn run() -> Result<bool> {
     };
     cfg.computer_use |= cli.computer_use;
     cfg.energy |= cli.energy;
+    if let Some(w) = cli.power_limit {
+        cfg.power_limit_w = Some(w);
+    }
     // The engine log is stderr, which only a client like the Mac app keeps.
     cfg.log_calls |= cli.serve;
     cfg.cloud_sandbox = cli.serve_ws.is_some();

@@ -1,0 +1,23 @@
+{
+  "doc": "What a streaming reply shows of its text: the end is held back while it's half-finished markdown, so it never shows raw and then changes (spec, \"A reply streams where it rests\"). Both apps run these cases: the web's `settled` (apps/web/src/ui/Markdown.tsx, test/markdown.test.ts) and the Mac's `Markdown.settled` (FrogKit Markdown.swift, FrogTests/MarkdownTests). A finished message shows all of its text.",
+  "cases": [
+    { "why": "plain prose shows as it arrives", "text": "The retry waits on the store", "shown": "The retry waits on the store" },
+    { "why": "an unclosed inline code span waits", "text": "It calls `thread_r", "shown": "It calls " },
+    { "why": "a closed one shows", "text": "It calls `thread_rng()` for jitter", "shown": "It calls `thread_rng()` for jitter" },
+    { "why": "unclosed bold waits", "text": "This is **the cause", "shown": "This is " },
+    { "why": "closed bold shows", "text": "This is **the cause** of it", "shown": "This is **the cause** of it" },
+    { "why": "unclosed strikethrough waits", "text": "It was ~~flaky", "shown": "It was " },
+    { "why": "an unfinished link waits", "text": "See [the docs](https://docs.rs/ra", "shown": "See " },
+    { "why": "a link's text alone waits", "text": "See [the docs", "shown": "See " },
+    { "why": "a finished link shows", "text": "See [the docs](https://docs.rs) now", "shown": "See [the docs](https://docs.rs) now" },
+    { "why": "a list marker alone waits", "text": "Two things:\n\n- ", "shown": "Two things:\n\n" },
+    { "why": "a numbered marker alone waits", "text": "Steps:\n\n1.", "shown": "Steps:\n\n" },
+    { "why": "a heading marker alone waits", "text": "Done.\n\n##", "shown": "Done.\n\n" },
+    { "why": "a list item with words shows", "text": "- The delay takes an", "shown": "- The delay takes an" },
+    { "why": "a half-typed opening fence waits", "text": "Like this:\n\n```ru", "shown": "Like this:\n\n" },
+    { "why": "inside an open fence the code shows as it arrives", "text": "```rust\nlet x = `a", "shown": "```rust\nlet x = `a" },
+    { "why": "a half-typed closing fence waits", "text": "```rust\nlet x = 1;\n``", "shown": "```rust\nlet x = 1;\n" },
+    { "why": "only the last block is held: earlier ones are finished", "text": "It calls `a` and **b**.\n\nThen `c", "shown": "It calls `a` and **b**.\n\nThen " },
+    { "why": "code spans hide asterisks from the bold count", "text": "Use `**` for **bold", "shown": "Use `**` for " }
+  ]
+}

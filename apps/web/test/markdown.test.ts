@@ -26,3 +26,12 @@ test("inline: code, bold, em, links; unsafe links stay text", () => {
   const bad = inline("[click](javascript:alert(1))").filter(isValidElement) as ReactElement[];
   assert.ok(bad.every((n) => n.type !== "a"));
 });
+
+// A streaming reply holds back half-finished markdown at its end, so it never shows raw and then
+// changes: the shared cases (docs/design/transcript/holdback.json), which the Mac runs too.
+import { readFileSync as readHoldback } from "node:fs";
+import { settled } from "../src/ui/Markdown.tsx";
+const holdback = JSON.parse(readHoldback(new URL("../../../docs/design/transcript/holdback.json", import.meta.url), "utf8")) as { cases: { why: string; text: string; shown: string }[] };
+for (const c of holdback.cases) {
+  test(`streaming holds back: ${c.why}`, () => assert.equal(settled(c.text), c.shown));
+}

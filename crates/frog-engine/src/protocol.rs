@@ -1612,6 +1612,20 @@ pub struct TurnUsage {
     /// such a turn has no pace data.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pace: Option<crate::pace::Pace>,
+    /// A model call the turn was stopped in the middle of: what it had used by then, which the
+    /// provider never reported. Not in the totals above. Absent
+    /// when no call was cut off, and in turns from before it was kept.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cut: Option<CutCall>,
+}
+
+/// What a model call cut off mid-stream had used: estimates, not the provider's counts.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+pub struct CutCall {
+    /// Output counted from what had streamed (pieces, so approximate).
+    pub output_tokens: u64,
+    /// The prompt it was sent, from the context estimate.
+    pub input_tokens: u64,
 }
 
 /// The node a pooled model's call ran on (docs/node-protocol.md §7).

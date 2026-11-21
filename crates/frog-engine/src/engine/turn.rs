@@ -355,6 +355,8 @@ impl Agent {
         self.inbox_told = None;
         self.checkpoint(turn);
         self.turn_usage = TurnUsage::default();
+        self.streaming_out
+            .store(0, std::sync::atomic::Ordering::Relaxed);
         // A new turn may ask again what the last one was denied (the session's breaker still holds).
         self.turn_denied.clear();
         self.turn_denied_unasked.clear();

@@ -5,7 +5,7 @@ struct ItemView: View {
     let conversation: Conversation
     /// False for an MCP App result that a later call in the turn superseded.
     var showsApp = true
-    /// The answer still being written, shown as a typing bubble (see `TypingBubble`).
+    /// The answer still being written (see `ReplyText`).
     var typing = false
 
     var body: some View {
@@ -14,10 +14,9 @@ struct ItemView: View {
         #endif
         switch item.kind {
         case .message:
-            // One view for a message from first word to history, so the handoff from the
-            // typing bubble to the plain row is a fade inside it, not a swap of two (a swap
-            // would rebuild the text view and replay the ink).
-            TypingBubble(text: item.streamedText, conversation: conversation, writing: typing && !item.done)
+            // One view for a message from first word to history: a swap of two at the handoff
+            // would rebuild the text view and replay the ink.
+            ReplyText(text: item.streamedText, writing: typing && !item.done)
         case .reasoning:
             ReasoningView(text: item.text, done: item.done)
         case .tool("Diagram", _) where item.result?.diagram != nil:
@@ -666,56 +665,22 @@ struct ApprovalDetails: View {
     }
 }
 
-/// The answer as it writes itself, in a quiet bubble while it streams: the words arriving
-/// inside and the model's speed at its edge (no frog: the mascot is retired from the live flow
-/// and keeps the empty page). The status line ("Thinking… 4s") stays for the work before and
-/// between answers; this is for the answer.
-///
-/// This is the message row's only view, from the first word to history: at the handoff the
-/// words are already in place, and the bubble's chrome and insets ease out to the plain row in
-/// one animated settle — no swap, so the text view (and its ink) is never rebuilt.
-struct TypingBubble: View {
+/// The answer, from its first word to history: plain prose in the place it will rest (spec,
+/// "A reply streams where it rests"). No card, fill or padding while it writes, and nothing
+/// beside it (the live stats sit under it, `LiveRow`), so finishing changes nothing about its
+/// layout; only the ink stops. One view throughout, so the text view (and its ink) is never
+/// rebuilt at the handoff.
+struct ReplyText: View {
     let text: String
-    let conversation: Conversation
-    /// Still streaming: the bubble shows; settling fades it out.
+    /// Still streaming: the words write themselves in (`InkReveal`).
     var writing: Bool
-    @State private var settled = false
 
     var body: some View {
-        let live = writing && !settled
-        // No gap beside a collapsed speed readout: a finished answer lines up with the
-        // activity lines.
-        HStack(alignment: .top, spacing: live ? TurnSpace.Inset.row : 0) {
-            MarkdownView(text: text, streaming: live)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .environment(\.hangsListMarkers, true)
-            speed
-                .opacity(live ? 1 : 0)
-                .frame(width: live ? nil : 0, alignment: .trailing)
-        }
-        .padding(.vertical, live ? TurnSpace.Card.padding : 0)
-        .padding(.leading, live ? TurnSpace.Inset.roomy : 0)
-        .padding(.trailing, live ? TurnSpace.Inset.roomy : 0)
-        .background(.quaternary.opacity(live ? 0.45 : 0), in: .rect(cornerRadius: 14))
-        .animation(.easeOut(duration: 0.25), value: settled)
-        .animation(.easeOut(duration: 0.25), value: writing)
-        .onAppear { settled = !writing }
-        .onChange(of: writing) { _, w in
-            if !w { settled = true }
-        }
-        .accessibilityHidden(!live)
-        .accessibilityLabel("Frog is writing")
-    }
-
-    /// The model's speed, at the bubble's edge, from the engine's status.
-    @ViewBuilder
-    private var speed: some View {
-        if let s = conversation.status?.tokensPerSec, s > 0 {
-            Text(ModelStats.speedText(s))
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.tertiary)
-                .fixedSize()
-        }
+        MarkdownView(text: text, streaming: writing)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .environment(\.flushListMarkers, true)
+            .accessibilityHidden(!writing)
+            .accessibilityLabel("Frog is writing")
     }
 }
 

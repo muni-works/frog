@@ -71,6 +71,9 @@ export function accept(req, socket, { protocol } = {}) {
   };
   socket.on("close", gone);
   socket.on("error", gone);
+  // The peer went without a close frame (a proxy ends its side when the browser's resets): the
+  // HTTP server allows half-open sockets, so close ours too rather than hold it forever.
+  socket.on("end", () => { gone(); socket.destroy(); });
   return conn;
 }
 

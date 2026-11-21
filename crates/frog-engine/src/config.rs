@@ -268,6 +268,11 @@ pub struct Config {
     /// is on). Off by default: it keeps a thread reading the power sensor.
     #[serde(skip)]
     pub energy: bool,
+    /// Hold this Mac's draw above idle to an average of this many watts while local models run
+    /// (`power_limit_w`, or `--power-limit`, which the Mac app passes from Settings › Usage).
+    /// Needs the power sensor (`energy`); cloud models aren't held.
+    #[serde(default)]
+    pub power_limit_w: Option<f64>,
     /// Log each model call's timing to stderr (the Mac app's engine log): sent, still waiting,
     /// done or failed. `--serve` turns it on; the TUI draws on the terminal and leaves it off.
     #[serde(skip)]

@@ -84,7 +84,7 @@ export class Pin {
    *  where it starts (the prompt when it's the turn's first words), in the scroller's content. */
   private longAnswer(el: HTMLElement): { item: string; top: number } | null {
     const turn = el.querySelector('.tx > .turn:last-of-type')
-    const say = turn?.querySelector<HTMLElement>('.say[data-item]:has(.caret)')
+    const say = turn?.querySelector<HTMLElement>('.say[data-item][data-writing]')
     const item = say?.dataset.item
     if (!turn || !say || !item || item === this.held) return null
     // After steps it reads from the answer; as the turn's first words, from your message.

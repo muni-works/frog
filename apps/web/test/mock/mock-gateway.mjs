@@ -186,7 +186,13 @@ export function startMock({ port = 8788, fixture = new URL("./demo.jsonl", impor
     conn.onclose = () => s.rec.peers.delete(conn);
   });
 
-  return new Promise((resolve) => server.listen(port, "127.0.0.1", () => resolve({ server, port: server.address().port, close: () => new Promise((r) => (server.closeAllConnections(), server.close(r))) })));
+  // Every socket, upgraded ones too: `closeAllConnections` only knows HTTP ones, and an upgraded
+  // websocket a peer has left half-open (vite's proxy ends it when Chrome's side resets) would keep
+  // `server.close` from ever calling back, and a test file's `after` with it.
+  const sockets = new Set();
+  server.on("connection", (c) => { sockets.add(c); c.once("close", () => sockets.delete(c)); });
+  const close = () => new Promise((r) => { server.close(() => r()); for (const c of sockets) c.destroy(); });
+  return new Promise((resolve) => server.listen(port, "127.0.0.1", () => resolve({ server, port: server.address().port, close })));
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
