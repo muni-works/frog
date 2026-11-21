@@ -62,6 +62,21 @@ final class ModelStatsTests: XCTestCase {
         XCTAssertFalse(s.overCap)
     }
 
+    func testTheDailyEnergyCapCountsOnlyThisMacToday() {
+        let s = stats()
+        var u = usage(10, 10, model: "tang/q")
+        u.energy = TurnEnergy(localWh: 3, remoteWh: 50)
+        s.record(u, model: nil)
+        s.record(u, model: nil, at: .now.addingTimeInterval(-2 * 86_400))
+        // The data center estimate and other days don't count toward this Mac's day.
+        XCTAssertEqual(s.macEnergyToday(), 3, accuracy: 1e-9)
+        XCTAssertFalse(s.overEnergyCap)
+        s.dailyEnergyCap = 3
+        XCTAssertTrue(s.overEnergyCap)
+        s.dailyEnergyCap = 0
+        XCTAssertFalse(s.overEnergyCap)
+    }
+
     func testCacheReadsArePricedAtTheCachedRate() {
         let s = stats()
         let spec = "vercel/anthropic/claude-opus-5.5"
