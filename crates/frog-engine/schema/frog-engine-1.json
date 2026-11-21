@@ -562,6 +562,28 @@
       ],
       "type": "object"
     },
+    "CutCall": {
+      "description": "What a model call cut off mid-stream had used: estimates, not the provider's counts.",
+      "properties": {
+        "input_tokens": {
+          "description": "The prompt it was sent, from the context estimate.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "output_tokens": {
+          "description": "Output counted from what had streamed (pieces, so approximate).",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "output_tokens",
+        "input_tokens"
+      ],
+      "type": "object"
+    },
     "Decision": {
       "oneOf": [
         {
@@ -9381,6 +9403,17 @@
             "integer",
             "null"
           ]
+        },
+        "cut": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CutCall"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "A model call the turn was stopped in the middle of: what it had used by then, which the\nprovider never reported. Not in the totals above. Absent\nwhen no call was cut off, and in turns from before it was kept."
         },
         "energy": {
           "anyOf": [

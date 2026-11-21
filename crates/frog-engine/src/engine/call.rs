@@ -307,6 +307,29 @@ impl Agent {
             *sent = flat;
             r
         };
+        // `power_limit_w`: a local model waits out what the last calls drew over the limit.
+        // Dropped with the call when the turn stops, like a retry's backoff.
+        if !crate::harness::is_cloud(&self.profile)
+            && let Some(m) = &self.meter
+        {
+            let idle = self.energy_mark.as_ref().and_then(|(_, w)| *w);
+            let held = self
+                .throttle
+                .lock()
+                .unwrap()
+                .as_mut()
+                .map(|t| (t.before_call(m, idle), t.limit_w));
+            if let Some((wait, limit)) = held
+                && !wait.is_zero()
+            {
+                self.emit(Event::Progress {
+                    label: format!("Holding to {limit:.0} W"),
+                    completed: None,
+                    total: None,
+                });
+                tokio::time::sleep(wait).await;
+            }
+        }
         let mut attempt = 0;
         // One billing line per turn, however many calls: the transition to credit is one
         // fact, not one per step.
@@ -500,6 +523,8 @@ impl Agent {
                 // After the piece's own item and delta, so a client has drawn them.
                 if count {
                     streamed.tokens_sent = Some(now);
+                    self.streaming_out
+                        .store(streamed.pace.approx(), std::sync::atomic::Ordering::Relaxed);
                     let at = ms(now.duration_since(sent));
                     self.emit(Event::OutputTokens {
                         turn: self.active_turn.unwrap_or_default(),
@@ -518,6 +543,9 @@ impl Agent {
             let cloud = crate::harness::is_cloud(&self.profile);
             let r = self.watch_call(r, watching, cloud, &piece, &anchor).await;
             drop(on_event);
+            // The call came back (answered or failed): nothing of it is in flight any more.
+            self.streaming_out
+                .store(0, std::sync::atomic::Ordering::Relaxed);
             let rest = filter.finish();
             if !quiet && !rest.is_empty() {
                 text(&mut streamed, rest);

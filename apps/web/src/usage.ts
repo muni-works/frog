@@ -7,6 +7,17 @@ export interface Prices { input: number | null; output: number | null; cached: n
 
 /** A turn's cost in dollars at the model's list price, split like the Mac's PriceCard. Cache
  * writes are priced as fresh input. Null when the model's prices aren't known. */
+/** The turn used something: a finished model call, or one stopped mid-stream. */
+export function used(u: TurnUsage | undefined): boolean {
+  return !!u && (u.model_calls > 0 || (u.cut?.output_tokens ?? 0) > 0)
+}
+
+/** The totals with a stopped call's estimates in (the footer shows them with "about"). */
+export function spent(u: TurnUsage): TurnUsage {
+  if (!u.cut) return u
+  return { ...u, input_tokens: u.input_tokens + u.cut.input_tokens, output_tokens: u.output_tokens + u.cut.output_tokens, model_calls: u.model_calls + 1, cut: null }
+}
+
 export function turnCost(u: TurnUsage, m: Prices | undefined) {
   if (!m || m.input == null || m.output == null) return null
   const cached = u.cached_tokens ?? 0

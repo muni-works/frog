@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import WebSocket from "ws";
 import { startMock } from "./mock/mock-gateway.mjs";
 import { open, until, type Page } from "./cdp.ts";
+import { quietLogger, warm } from "./chrome.ts";
 
 const freePort = () => new Promise<number>((r) => { const s = listen().listen(0, "127.0.0.1", () => { const p = (s.address() as { port: number }).port; s.close(() => r(p)); }); });
 
@@ -33,8 +34,9 @@ export async function rig({ fixture, fresh = false }: { fixture?: string; fresh?
   process.env.GATEWAY = api;
   process.env.VITE_API = `http://127.0.0.1:${port}`;
   const { createServer } = await import("vite");
-  const vite = await createServer({ root: fileURLToPath(new URL("..", import.meta.url)), logLevel: "error", server: { port, host: "127.0.0.1", strictPort: true } });
+  const vite = await createServer({ root: fileURLToPath(new URL("..", import.meta.url)), customLogger: await quietLogger(), server: { port, host: "127.0.0.1", strictPort: true } });
   await vite.listen();
+  await warm(vite, ["/src/main.tsx"]);
   const origin = `http://127.0.0.1:${port}`;
   const once = (key: string, path: string, body?: unknown) => fetch(api + path, { method: body ? "POST" : "GET", headers: { authorization: `Bearer ${key}`, "content-type": "application/json", connection: "close" }, body: body ? JSON.stringify(body) : undefined }).then((r) => r.json());
   // On GitHub's runners a call now and then died in a few ms as "fetch failed": a kept-alive socket
@@ -68,7 +70,7 @@ export async function rig({ fixture, fresh = false }: { fixture?: string; fresh?
     await until(() => page.eval<boolean>("!!document.querySelector('#root > *')"));
     return page;
   };
-  return { origin, call, session, play: (k: string, id: string, t: string[]) => play(k, id, t), phone, close: async () => { await vite.close(); await mock.close(); } };
+  return { origin, call, session, play: (k: string, id: string, t: string[]) => play(k, id, t), phone, close: async () => { await Promise.allSettled([vite.close(), mock.close()]); } };
 }
 
 /** A PNG of what's on screen. */

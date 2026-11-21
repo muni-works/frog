@@ -38,7 +38,7 @@ enum ModelSections {
             switch s {
             case .ready: 0
             case .downloading: 1
-            case .wontFit, .overCap, .unreachable: 3
+            case .wontFit, .overCap, .overEnergyCap, .unreachable: 3
             default: 2
             }
         }

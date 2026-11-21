@@ -15424,3 +15424,61 @@ async fn permission_waits_are_timed() {
     assert_eq!(waits.len(), 1);
     assert_eq!(waits[0].item.as_deref(), Some(item.as_str()));
 }
+
+/// A turn stopped mid-stream still says what it used (Cam, 2026-11-21: a stopped turn keeps
+/// its footer): the cut-off call never reported usage, so `usage.cut` carries what had
+/// streamed and the prompt it was sent, apart from the provider's totals. A turn that finishes
+/// carries none.
+#[tokio::test]
+async fn a_turn_stopped_mid_stream_reports_the_cut_off_call() {
+    let fails = vec![scripted::Fail::Pause {
+        text: "The retry waits on the store, and the store gives up first, so".into(),
+        secs: 30,
+    }];
+    let mut h = engine_fail(fails, vec![reply(vec![text("Done.")], Stop::End)]);
+    while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+    h.ops
+        .send(Op::Submit {
+            typed: false,
+            text: "why is it flaky?".into(),
+            images: Vec::new(),
+            more: Vec::new(),
+        })
+        .unwrap();
+    let mut stopped = false;
+    let usage = loop {
+        match h.events.recv().await.unwrap().event {
+            Event::OutputTokens { output, .. } if output > 0 && !stopped => {
+                stopped = true;
+                h.ops.send(Op::Interrupt).unwrap();
+            }
+            Event::TurnEnded { reason, usage, .. } => {
+                assert_eq!(reason, EndReason::Cancelled);
+                break usage;
+            }
+            _ => {}
+        }
+    };
+    assert!(stopped, "output streamed before the stop");
+    assert_eq!(usage.model_calls, 0, "the provider never finished a call");
+    let cut = usage.cut.expect("the cut-off call is reported");
+    assert!(cut.output_tokens > 0, "what had streamed: {cut:?}");
+    assert!(usage.timing.is_some_and(|t| t.wall_ms > 0));
+
+    // The next turn finishes: nothing cut.
+    h.ops
+        .send(Op::Submit {
+            typed: false,
+            text: "again".into(),
+            images: Vec::new(),
+            more: Vec::new(),
+        })
+        .unwrap();
+    loop {
+        if let Event::TurnEnded { reason, usage, .. } = h.events.recv().await.unwrap().event {
+            assert_eq!(reason, EndReason::Complete);
+            assert_eq!(usage.cut, None);
+            break;
+        }
+    }
+}

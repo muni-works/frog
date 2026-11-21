@@ -63,6 +63,8 @@ struct ModelIdentity: Hashable, Sendable {
         case notAllowed(project: String)
         /// A cloud model, with this month's spending cap reached.
         case overCap
+        /// On this Mac, with today's energy cap reached.
+        case overEnergyCap
         /// Its app or server isn't answering ("Ollama isn't running").
         case unreachable(String)
 
@@ -171,6 +173,7 @@ extension ModelIdentity {
             return .needsKey(provider: name)
         }
         if place.isCloud, ModelStats.shared.overCap { return .overCap }
+        if place == .mac || place == .apple, ModelStats.shared.overEnergyCap { return .overEnergyCap }
         if let p = ModelContext.provider(provider), p.local, ModelContext.reachable(provider) == false {
             return .unreachable(p.custom ? "\(p.name) isn't responding" : "\(p.name) isn't running")
         }

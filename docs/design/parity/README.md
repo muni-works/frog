@@ -93,7 +93,7 @@ times and carries `tests` (`FROG_PREBUILT_DIR`).
   "format": "frog-transcript-metrics/1",
   "app": "web",
   "width": 1280, "height": 800, "look": "dark",
-  "column": 720, "gutter": 32, "pane": 1010, "mark": -26, "markOnScreen": true,
+  "column": 720, "gutter": 32, "pane": 1010, "mark": 0, "markOnScreen": true,
   "rows": [
     { "kind": "line", "text": "Failed cargo test -q upload 10 of 11 · 9.0s", "x": 0, "top": 102, "height": 24, "fontSize": 12.5 }
   ]
@@ -150,10 +150,13 @@ fixture ([`edges-fixture.mjs`](edges-fixture.mjs), written out as `edges.jsonl`)
 row: prose, a paragraph that opens with inline code, a heading, a list, a code block, a table, tool
 lines of every kind with their marks and results, an opened failed test run, the footer and its turn
 line, an error, a question card, a permission card, the waiting row and its stats, an inline visual,
-and the composer. Each app writes `frog-transcript-edges/1` (format in [`edges.mjs`](edges.mjs)):
-every element's left and right edge from the column's box, and which line it claims (`text`, `box`,
-`right`, or `hung` for a mark). [`check-edges.mjs`](check-edges.mjs) prints the table and fails on
-anything more than 0.5 pt off its line, or a kind of row missing.
+and the composer. Each app writes `frog-transcript-edges/2` (format in [`edges.mjs`](edges.mjs)):
+every element's left and right edge from the column's left line, and which line it claims (`text`
+or `box` for the left line, `after` for a marked line's words one mark column in, `item` for a list
+item's words one marker column in, `before` for a mark that must end before its words, `right`).
+[`check-edges.mjs`](check-edges.mjs) prints the table and fails on anything more than 0.5 pt off
+its line, or a kind of row missing. Until 2026-11-21 (`/1`) marks and list markers hung in the
+gutter.
 
 ```bash
 node docs/design/parity/edges.mjs http://127.0.0.1:5173/s/s_parity edges-web.json 1280 2600 dark

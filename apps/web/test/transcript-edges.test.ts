@@ -1,11 +1,13 @@
-// Two lines down the conversation column (docs/design/transcript/spec.md, "Measure and the left
-// edge"): every row's text starts on the column's left edge, everything that reaches the right
-// ends on its right edge, and marks hang in the gutter. The edge fixture
+// Two lines down the conversation column (docs/design/transcript/spec.md, "One left line, flush"
+// and "Two lines"): every row starts on the column's left line (a line's mark, a list's marker,
+// prose), a marked line's words one mark column in and a list item's one marker column in, and
+// everything that reaches the right ends on its right edge. The edge fixture
 // (docs/design/parity/edges-fixture.mjs, every kind of row) is served by the parity gateway, the
 // real App draws it in headless Chrome, docs/design/parity/edges.mjs measures each element and
 // check-edges.mjs fails on anything more than 0.5 pt off its line or any kind of row missing.
 // 2026-11-18: an opening code chip pushed its paragraph 4 pt in, list items started 22 pt in
-// behind their bullets, and the footer's turn line stopped short of the edge. Skips without Chrome.
+// behind their bullets, and the footer's turn line stopped short of the edge. 2026-11-21: marks
+// and list markers moved from the gutter onto the left line (Cam). Skips without Chrome.
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
@@ -59,9 +61,9 @@ test("every element of the edge fixture sits on the column's two lines (1280 wid
 test("and with the inspector open (the column centred in a narrower pane)", { skip, timeout: 90_000 }, () =>
   edges(1600, 2600, { "frog.inspector": "1" }));
 
-// The phone: a 16 gutter, under the hang, so marks come inside and all text indents by 26
-// together; boxes and the composer keep the column's edges (the composer sat 8 pt outside them).
-test("and on a phone, where marks come inside and text indents by the hang", { skip, timeout: 90_000 }, () => edges(375, 2600));
+// The phone: a 16 gutter, and the same lines; boxes and the composer keep the column's edges
+// (the composer sat 8 pt outside them).
+test("and on a phone, where only the gutter narrows", { skip, timeout: 90_000 }, () => edges(375, 2600));
 
 test("edges.jsonl is edges-fixture.mjs's output (the Mac's edge test reads the file)", () => {
   const fresh = execFileSync("node", [join(parity, "edges-fixture.mjs")]).toString().trim();

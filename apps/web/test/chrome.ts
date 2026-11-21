@@ -2,6 +2,7 @@
 // --dump-dom and --screenshot to read and draw a parity page. No Chrome (CI's runners, a Linux box
 // without it): `chrome` is null and the tests that need it skip.
 import { execFile } from "node:child_process";
+import type { Server } from "node:http";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -21,11 +22,41 @@ const CANDIDATES = [
 
 export const chrome: string | null = CANDIDATES.find((p): p is string => !!p && existsSync(p)) ?? null;
 
+/** A logger for test vite servers that drops "ws proxy socket error" for a peer that has gone
+ *  (EPIPE, ECONNRESET): a page closed with its websocket open, which every Chrome test does. */
+export async function quietLogger() {
+  const { createLogger } = await import("vite");
+  const logger = createLogger("error");
+  const error = logger.error.bind(logger);
+  logger.error = (msg, o) => {
+    const code = (o?.error as NodeJS.ErrnoException | undefined)?.code;
+    if (code === "EPIPE" || code === "ECONNRESET") return;
+    error(msg, o);
+  };
+  return logger;
+}
+
+/** Transform `entries` and everything they import, and wait for vite's crawl to end, before the
+ *  first page. On a fresh runner (no deps cache) the first page otherwise found deps mid-load,
+ *  vite re-optimized and reloaded it, and a test waiting for it ran out of time. */
+export async function warm(server: import("vite").ViteDevServer, entries: string[]) {
+  await Promise.all(entries.map((e) => server.warmupRequest(e)));
+  await server.waitForRequestsIdle();
+}
+
+/** `server.close` that waits on no one: every socket is destroyed, upgraded websockets too, which
+ *  `closeAllConnections` doesn't know and a peer can leave half-open. Call before `listen`. */
+export function closer(server: Server): () => Promise<void> {
+  const sockets = new Set<import("node:net").Socket>();
+  server.on("connection", (c) => { sockets.add(c); c.once("close", () => sockets.delete(c)); });
+  return () => new Promise((r) => { server.close(() => r()); for (const c of sockets) c.destroy(); });
+}
+
 /** A vite dev server for this app on a free port; `close` when done. */
 export async function serve(): Promise<{ origin: string; close: () => Promise<void> }> {
   const { createServer } = await import("vite");
   const root = fileURLToPath(new URL("..", import.meta.url));
-  const server = await createServer({ root, configFile: join(root, "vite.config.ts"), logLevel: "error", server: { port: 0, host: "127.0.0.1", strictPort: false } });
+  const server = await createServer({ root, configFile: join(root, "vite.config.ts"), customLogger: await quietLogger(), server: { port: 0, host: "127.0.0.1", strictPort: false } });
   await server.listen();
   const addr = server.httpServer?.address();
   if (!addr || typeof addr === "string") throw new Error("vite didn't listen");

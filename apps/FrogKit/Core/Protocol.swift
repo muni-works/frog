@@ -492,6 +492,28 @@ struct TurnUsage: Decodable, Sendable {
     /// `[i*bucketMs, (i+1)*bucketMs)` from its start): the turn line's pace curve. Absent before
     /// #420, and when nothing streamed.
     var pace: Pace?
+    /// A model call the turn was stopped in the middle of: estimates of what it had used, not
+    /// in the totals above (the engine's `usage.cut`). Absent when none was cut off.
+    var cut: CutCall?
+
+    struct CutCall: Decodable, Sendable, Equatable {
+        var outputTokens: UInt64
+        var inputTokens: UInt64
+    }
+
+    /// The turn used something: a finished model call, or one stopped mid-stream.
+    var used: Bool { modelCalls > 0 || (cut?.outputTokens ?? 0) > 0 }
+
+    /// The totals with the cut-off call's estimates in (what the footer shows, with "about").
+    var spent: TurnUsage {
+        guard let cut else { return self }
+        var u = self
+        u.inputTokens += cut.inputTokens
+        u.outputTokens += cut.outputTokens
+        u.modelCalls += 1
+        u.cut = nil
+        return u
+    }
 
     struct Pace: Decodable, Sendable, Equatable {
         var bucketMs: UInt64

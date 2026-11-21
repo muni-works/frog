@@ -153,6 +153,9 @@ export interface TurnUsage {
   served_by?: ServedBy | null;
   /** Output tokens over the turn in buckets, for the turn line's curve. Absent: no pace data. */
   pace?: Pace | null;
+  /** A model call the turn was stopped in the middle of: estimates of what it had used (output
+   * from what had streamed, input from the context estimate), not in the totals above. */
+  cut?: { output_tokens: number; input_tokens: number } | null;
 }
 
 /** protocol.rs `ServedBy`. */

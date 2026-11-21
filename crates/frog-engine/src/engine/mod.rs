@@ -7,8 +7,8 @@ use crate::harness::{self, Tier};
 use crate::message::{Block, Message, Role, Usage};
 use crate::prompt;
 use crate::protocol::{
-    CallTiming, Decision, Delta, EndReason, EngineError, Envelope, Event, Item, ItemKind, Level,
-    Mode, Op, Part, Status, ToolOutcome, ToolTiming, TurnTiming, TurnUsage,
+    CallTiming, CutCall, Decision, Delta, EndReason, EngineError, Envelope, Event, Item, ItemKind,
+    Level, Mode, Op, Part, Status, ToolOutcome, ToolTiming, TurnTiming, TurnUsage,
 };
 use crate::provider::{
     HttpError, Provider, Request, Response, Stop, StreamError, StreamEvent, ToolSpec, new_id,
@@ -1956,6 +1956,9 @@ struct Agent {
     inbox_told: Option<(usize, u32)>,
     /// Running totals for the current turn.
     turn_usage: TurnUsage,
+    /// The streaming call's output so far (its `OutputTokens` estimate), 0 between calls. A
+    /// stop drops the call mid-stream, so `end_turn` reads it as the cut-off call's output.
+    streaming_out: AtomicU64,
     /// Where the current turn's time went, and when it started.
     timing: TurnTiming,
     turn_clock: Option<Instant>,
@@ -1971,6 +1974,8 @@ struct Agent {
     /// power to subtract).
     meter: Option<crate::energy::Meter>,
     energy_mark: Option<(crate::energy::Mark, Option<f64>)>,
+    /// `power_limit_w`: the budget local model calls wait on. Top-level only, like the meter.
+    throttle: Mutex<Option<crate::energy::Throttle>>,
     root: PathBuf,
     system: String,
     specs: Vec<ToolSpec>,
@@ -2369,6 +2374,7 @@ impl Agent {
             quiet: 0,
             inbox_told: None,
             turn_usage: TurnUsage::default(),
+            streaming_out: AtomicU64::new(0),
             timing: TurnTiming::default(),
             turn_clock: None,
             turn_pace: Default::default(),
@@ -2376,6 +2382,7 @@ impl Agent {
             sent: Mutex::default(),
             meter: None,
             energy_mark: None,
+            throttle: Mutex::new(None),
             root: o.cwd,
             system,
             specs: tools::specs(),
@@ -2477,6 +2484,12 @@ impl Agent {
         if agent.cfg.energy && !agent.subagent {
             agent.meter = crate::energy::Meter::new();
             agent.meter_busy(true);
+            if agent.meter.is_some() {
+                *agent.throttle.get_mut().unwrap() = agent
+                    .cfg
+                    .power_limit_w
+                    .and_then(crate::energy::Throttle::new);
+            }
         }
         Ok(agent)
     }
@@ -2942,7 +2955,15 @@ impl Agent {
         let pace = timing
             .as_ref()
             .and_then(|t| self.turn_pace.finish(t.wall_ms));
+        // A call the turn ended in the middle of: what it had streamed, and the prompt it was
+        // sent (the window's estimate), so a stopped turn still says what it used.
+        let streamed = self.streaming_out.swap(0, Ordering::Relaxed);
+        let cut = (streamed > 0).then(|| CutCall {
+            output_tokens: streamed,
+            input_tokens: self.context_tokens().unwrap_or(0),
+        });
         let usage = TurnUsage {
+            cut,
             tokens_per_sec: self.tokens_per_sec(),
             context_tokens: self.context_tokens(),
             pace,

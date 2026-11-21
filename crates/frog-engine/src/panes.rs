@@ -1200,29 +1200,44 @@ impl Panes {
 
     /// Wait for a fresh shell to show its first prompt (its rc files can take a moment), so a
     /// command isn't typed into the startup noise. Shells without markers get a settle wait.
-    /// The marker comes before the prompt is drawn, so then wait for the drawing to stop too:
-    /// typed before the line editor starts, a command is echoed twice.
+    /// The marker comes before the prompt is drawn (bash expands PS1, a theme runs `git status`,
+    /// then the line editor starts), so then wait for the prompt itself to land after the
+    /// marker and for the drawing to stop: typed before the line editor starts, a command is
+    /// echoed twice. Drawn means the output since the marker ends mid-line, the cursor on the
+    /// prompt: whole lines there (a `PROMPT_COMMAND` that prints, macOS bash's zsh notice) come
+    /// before it. A prompt that never leaves a partial line gets a longer quiet instead.
     ///
     /// A shell with markers waits for its marker, not for output to settle: an rc that prints
     /// and then works for a while (oh-my-zsh's update check fetches before it asks) goes quiet
     /// long before its prompt, and a command typed then lands in the rc and reads the rc's own
-    /// first prompt as its end.
-    async fn wait_ready(&self, id: &str) {
-        let (grid, marks) = {
+    /// first prompt as its end. It waits as long as the run would wait for its command
+    /// (`budget`, at least 5 s): a shell slower than a fixed floor to start (a loaded CI runner)
+    /// got the command typed early, echoed onto its first prompt line.
+    async fn wait_ready(&self, id: &str, budget: Duration) {
+        let (grid, marks, sent_at) = {
             let s = self.state.lock().unwrap();
             let Some(t) = s.panes.get(id).and_then(|p| p.term.as_ref()) else {
                 return;
             };
-            (t.grid.clone(), t._rc.is_some())
+            (t.grid.clone(), t._rc.is_some(), t.sent_at)
         };
+        let floor = Duration::from_secs(5);
+        let limit = if marks { budget.max(floor) } else { floor };
         let started = Instant::now();
-        while started.elapsed() < Duration::from_secs(5) {
+        while started.elapsed() < limit {
             {
                 let g = grid.lock().unwrap();
-                if g.exit.is_some() {
+                // The model's last command is still running: `run` says so at once.
+                if g.exit.is_some() || (g.prompts > 0 && g.prompts <= sent_at) {
                     return;
                 }
-                if g.prompts > 0 && g.quiet_for() > Duration::from_millis(120) {
+                let drawn = g
+                    .since(g.prompt_mark, None)
+                    .chars()
+                    .last()
+                    .is_some_and(|c| c != '\n' && c != '\r');
+                let settle = Duration::from_millis(if drawn { 120 } else { 2000 });
+                if g.prompts > 0 && g.quiet_for() > settle {
                     return;
                 }
                 if !marks && g.received > 0 && g.quiet_for() > Duration::from_millis(700) {
@@ -1234,7 +1249,7 @@ impl Panes {
     }
 
     async fn run(&self, id: &str, command: &str, wait: Duration) -> Result<Output> {
-        self.wait_ready(id).await;
+        self.wait_ready(id, wait).await;
         let (grid, mark) = {
             let mut s = self.state.lock().unwrap();
             let t = s
@@ -1829,6 +1844,57 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(out.content.trim(), "hi-23", "{}", out.content);
+        panes.shutdown();
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    /// A shell slower to its first prompt than the readiness wait's floor (a loaded CI runner,
+    /// a heavy rc): the command still waits for that prompt, so its output is only its own and
+    /// not the prompt line the early keystrokes were echoed onto.
+    #[tokio::test]
+    async fn terminal_run_waits_for_a_slow_first_prompt() {
+        let Some((panes, _rx, home)) = hermetic_shell("sleep 6\n") else {
+            return;
+        };
+        let out = panes
+            .terminal(
+                &json!({ "action": "run", "command": "echo hi-$((20+3))", "wait_ms": 15000 }),
+                false,
+            )
+            .await
+            .unwrap();
+        assert_eq!(out.content.trim(), "hi-23", "{}", out.content);
+        panes.shutdown();
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    /// A prompt that takes a while to draw after its marker (a git-status theme; the marker
+    /// prints first, then the prompt is expanded and the line editor starts), with a line
+    /// printed between them (bash's `PROMPT_COMMAND`; on CI, macOS bash's zsh notice): a command
+    /// typed in that gap is echoed by the tty and again by the line editor. The command waits
+    /// for the prompt itself, and every run does, not only the first.
+    #[tokio::test]
+    async fn terminal_run_waits_for_a_slow_prompt_to_draw() {
+        let rc =
+            "setopt prompt_subst 2>/dev/null\nPS1='$(sleep 1)> '\nPROMPT_COMMAND='echo note'\n";
+        let Some((panes, _rx, home)) = hermetic_shell(rc) else {
+            return;
+        };
+        for n in [1, 2] {
+            let out = panes
+                .terminal(
+                    &json!({ "action": "run", "command": format!("echo hi-$((20+{n}))"), "wait_ms": 15000 }),
+                    false,
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                out.content.trim(),
+                format!("hi-{}", 20 + n),
+                "{}",
+                out.content
+            );
+        }
         panes.shutdown();
         let _ = std::fs::remove_dir_all(home);
     }
