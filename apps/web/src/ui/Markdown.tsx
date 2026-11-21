@@ -183,8 +183,12 @@ export const Markdown = memo(function Markdown({ text }: { text: string }) {
                 return <li key={j} style={{ ['--d' as string]: d }}><span className={mk === '•' ? 'md-dot' : 'md-num'}>{mk === '•' ? ['•', '◦', '▪'][d % 3] : mk}</span>{inline(it, j)}</li>
               })}</ul>
             )
-            const items = b.items.map((it, j) => <li key={j} dir="auto">{inline(it, j)}</li>)
-            return b.ordered ? <ol key={i} start={b.start}>{items}</ol> : <ul key={i}>{items}</ul>
+            // A flat list draws its markers as spans too, so the transcript can put them on the
+            // column's line and the edge check can measure them (a ::marker can't be either).
+            const first = b.start ?? 1
+            const items = b.items.map((it, j) => <li key={j} dir="auto" style={{ ['--d' as string]: 0 }}>
+              <span className={b.ordered ? 'md-num' : 'md-dot'}>{b.ordered ? `${first + j}.` : '•'}</span>{inline(it, j)}</li>)
+            return b.ordered ? <ol key={i} className="md-nest" start={b.start}>{items}</ol> : <ul key={i} className="md-nest">{items}</ul>
           }
           case 'quote': return <blockquote key={i}><Markdown text={b.text} /></blockquote>
           case 'hr': return <hr key={i} />

@@ -47,10 +47,12 @@ test("a table keeps its column alignment", () => {
   assert.match(render("code-and-tables"), /text-align:right/);
 });
 
-test("a reply streaming inside an unclosed fence draws it as code, caret after", () => {
+// The caret is drawn by transcript.css at the end of a writing reply's last line of words; one
+// that ends in a code box has none (it would add a line inside the box, which finishing removes).
+test("a reply streaming inside an unclosed fence draws it as code, still writing", () => {
   const html = render("streaming-fence");
   assert.match(html, /class="md-code"/);
-  assert.match(html, /class="caret"/);
+  assert.match(html, /class="say"[^>]*data-writing=""/);
 });
 
 test("a connection drop says so, in the Mac's words, not 'system error'", () => {

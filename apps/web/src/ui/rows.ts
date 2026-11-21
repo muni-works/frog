@@ -175,19 +175,17 @@ export function foldTime(steps: Entry[]): string {
   return starts.length && ends.length ? duration(Math.max(...ends) - Math.min(...starts)) : ''
 }
 
-// The left edge (spec, "Measure and the left edge"). A line's mark hangs `hang` into the gutter;
-// when the pane is too narrow for a gutter that wide, the marks come inside the column and all
-// text indents by `hang` together. transcript.css switches at the same width.
+// The left edge (spec, "One left line, flush"). Every row starts on the column's left line: a
+// line's mark sits there and its words `HANG` in. Nothing hangs in the gutter, so a narrow pane
+// only narrows it. transcript.css switches at the same width.
 export const GUTTER = 32
 export const NARROW_GUTTER = 16
 export const HANG = 26
 /** Panes narrower than this (the phone, a narrow split) get the narrow gutter. */
 export const INSET_BELOW = 480
 
-export function gutterLayout(paneWidth: number): { gutter: number; mode: 'hang' | 'inset'; indent: number } {
-  const gutter = paneWidth < INSET_BELOW ? NARROW_GUTTER : GUTTER
-  const mode = gutter < HANG ? 'inset' : 'hang'
-  return { gutter, mode, indent: mode === 'inset' ? HANG : 0 }
+export function gutterLayout(paneWidth: number): { gutter: number } {
+  return { gutter: paneWidth < INSET_BELOW ? NARROW_GUTTER : GUTTER }
 }
 
 // The live row (spec, "The row"): one row at the end of the live turn for whatever runs now,

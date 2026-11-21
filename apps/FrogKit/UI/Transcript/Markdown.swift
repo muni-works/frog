@@ -210,9 +210,9 @@ final class MarkdownCache {
 }
 
 extension EnvironmentValues {
-    /// Markdown here is a reply in the transcript's column: a top-level list's markers hang in
-    /// the gutter, so its words start on the column's edge (spec, "Two lines"). The Mac reads it; the phone's text has no gutter.
-    @Entry var hangsListMarkers = false
+    /// Markdown here is a reply in the transcript's column: a list's markers start on the
+    /// column's line, left-aligned, its words one marker column in (spec, "Two lines").
+    @Entry var flushListMarkers = false
 }
 
 struct MarkdownView: View {

@@ -51,7 +51,7 @@ struct TranscriptView: View {
     /// The transcript's left edge for its pane's width (see `TranscriptEdge`), written only when
     /// it changes, so a live resize doesn't redraw every row each frame. The Mac only: the phone's
     /// prose (`MessageText+UIKit`) has no inset yet, so it keeps the one gutter.
-    @State private var edge = TranscriptEdge(gutter: TurnSpace.gutter, indent: 0)
+    @State private var edge = TranscriptEdge(gutter: TurnSpace.gutter)
 
     #if os(macOS)
     @State private var tableHandle = TableTranscriptHandle()
@@ -587,7 +587,7 @@ struct TranscriptView: View {
                 EmptyTranscript(conversation: conversation)
             }
         }
-        // The pane's width decides the gutter, and whether marks hang in it (`TranscriptEdge`).
+        // The pane's width decides the gutter (`TranscriptEdge`).
         .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { w in
             #if os(macOS)
             let next = TranscriptEdge.of(paneWidth: w)
@@ -597,7 +597,6 @@ struct TranscriptView: View {
                 let e = TranscriptEdge.of(paneWidth: w)
                 TranscriptMetrics.shared.pane = w
                 TranscriptMetrics.shared.gutter = e.gutter
-                TranscriptMetrics.shared.indent = e.indent
                 TranscriptMetrics.shared.column = min(TurnSpace.measure, w - 2 * e.gutter)
             }
         }
@@ -784,7 +783,6 @@ struct EndView: View {
     let usage: TurnUsage?
     /// The turn, for the turn line at the footer's right end.
     var turn: TurnState? = nil
-    @Environment(\.transcriptEdge) private var edge
     @Environment(\.turnFocus) private var focus
     @AppStorage(ModelStats.energyKey) private var showEnergy = false
     /// The turn's answer: a copy button at the row's end, shown on hover.
@@ -838,7 +836,6 @@ struct EndView: View {
                 .font(.frog(size: Tokens.Transcript.meta.size).monospacedDigit())
                 .foregroundStyle(Tokens.textTertiary)
                 .frame(height: Tokens.Transcript.meta.line)
-                .padding(.leading, edge.indent)
                 .metricsRow(.footer, Self.footer(usage, models: models).map(\.words).joined(separator: ", "),
                             key: "footer-\(usage.model ?? "")-\(usage.outputTokens)-\(usage.timing?.wallMs ?? 0)", fontSize: Tokens.Transcript.meta.size)
             }
@@ -910,24 +907,23 @@ struct EndView: View {
     /// "9.0s", "56s", "2m 5s": the web's `seconds`.
     static func seconds(_ ms: UInt64) -> String { StepLine.duration(Double(ms) / 1000) }
 
-    /// How a turn ended, in words on the column's edge; its symbol hangs in the gutter like a
-    /// line's mark (spec, "Measure and the left edge").
+    /// How a turn ended: its symbol on the column's line like a line's mark, its words one mark
+    /// column in (spec, "One left line, flush").
     private func banner(_ text: String, symbol: String, color: Color) -> some View {
         Text(text)
             .font(.callout)
             .foregroundStyle(color)
             .textSelection(.enabled)
             .fixedSize(horizontal: false, vertical: true)
-            .metricsEdge("words", claims: ["text"], kind: "error", text: text)
+            .metricsEdge("words", claims: ["after"], kind: "error", text: text)
+            .padding(.leading, Tokens.Transcript.Layout.hang)
             .overlay(alignment: .leading) {
                 Image(systemName: symbol)
                     .font(.callout)
                     .foregroundStyle(color)
-                    .frame(width: Tokens.Transcript.Layout.mark)
-                    .metricsEdge("mark", claims: ["hung"], kind: "error")
-                    .alignmentGuide(.leading) { $0[.leading] + Tokens.Transcript.Layout.hang }
+                    .frame(width: Tokens.Transcript.Layout.mark, alignment: .leading)
+                    .metricsEdge("mark", claims: ["box", "before"], kind: "error")
             }
-            .padding(.leading, edge.indent)
     }
 }
 

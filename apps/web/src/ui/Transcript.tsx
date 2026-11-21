@@ -46,7 +46,7 @@ function clip(out: string) {
   return [...ls.slice(0, half), `… ${ls.length - MAX_LINES} more lines …`, ...ls.slice(-half)].join('\n')
 }
 
-// Each tool's mark: the icon hung in the gutter beside its line. Its words come from the shared
+// Each tool's mark: the icon on the column's line, before its words. Its words come from the shared
 // verb table (rows.ts, docs/design/transcript/verbs.json), never from here.
 const MARK: Record<string, string> = {
   bash: ICON.terminal, '!': ICON.terminal, read: ICON.doc,
@@ -535,7 +535,9 @@ const TurnView = memo(function TurnView({ turn, index, live, ask, question, runn
       return e.text.trim() ? <ThinkingLine e={e} label={thoughtLabel(e, turn.reason?.type === 'cancelled' ? turn.endAt : undefined, thinkMsOf(turn, e.id))} /> : null
     }
     if (e.kind === 'message' && e.done && !e.text.trim()) return null
-    if (e.kind === 'message') return <div className="say" data-row="prose" data-item={e.id}><Markdown text={e.text} />{!e.done && <span className="caret" />}</div>
+    // Drawn where it rests from its first word (spec, "A reply streams where it rests"): the caret
+    // sits at the end of its last line (transcript.css), so finishing moves nothing.
+    if (e.kind === 'message') return <div className="say" data-row="prose" data-item={e.id} data-writing={e.done ? undefined : ''}><Markdown text={e.text} /></div>
     if (question?.item === e.id) return <div data-row="box"><QuestionCard q={question} onAnswer={cb.onAnswer} /></div>
     const asking = ask?.item === e.id ? ask : null
     const diff = e.diff ?? asking?.preview

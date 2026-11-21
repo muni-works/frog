@@ -77,24 +77,31 @@ These are `TurnSpace.Scale`'s values. `rowGroup` (8 / 5) goes away: lines in a r
 - The column is 720 wide with a 32 gutter each side (`TurnSpace.measure`, `gutter`).
 - **Prose stops at 640.** Paragraphs, lists and headings cap at 640; code, tables, diffs, cards,
   the prompt bubble (still at most 540, right-aligned) and the composer use the full 720.
-- **One left edge.** A line's mark (its icon, the live dot, a fold's chevron) sits in an 18-point
-  box hung 26 points into the gutter. A line's first word, a thought, the stats and prose all
-  start at the column's edge. This replaces `TurnSpace.Inset.iconColumn`.
-- **When the gutter is under 26** (a narrow split pane, the phone layout): marks come back
-  inside the column, all text indents by 26 together, and prose still shares one edge with the
-  lines. Never hang a mark off-screen or under a neighbouring pane. Measure the gutter at the
-  minimum pane width on the Mac and at 375 on the web, and write the numbers in the PR.
+- **One left line, flush.** Every row starts on the column's left line: a line's mark (its icon,
+  the live dot, a fold's chevron) has its 18-point box there, left-aligned in it, and a list's
+  marker starts there too. Nothing hangs in the gutter. A marked line's words follow its mark one
+  mark column in (`Layout.hang`, 26: the 18-point box and an 8 gap), and what opens under a line
+  (its output, its caption) and the stats under the live row start there with them. Rows with no
+  mark (prose, headings, the footer, a note, the stats under a writing answer) start on the line.
+  A list item's words start one marker column in (`Layout.marker`, 22). This replaced "marks
+  hang 26 into the gutter" (Cam, 2026-11-21) and `TurnSpace.Inset.iconColumn` before it.
+- **The same in a narrow pane** (a split, the phone layout): only the gutter narrows. Since
+  nothing hangs, nothing moves in when the gutter is under 26.
 - A line's hover plate is 24 tall with a 7 corner and bleeds 6 past the text on each side, so
   words don't move when it appears.
-- **Two lines.** Every row's text starts on the left line and everything that reaches the right
-  ends on the right line; marks hang in the gutter and never push text. Boxes (code, tables, cards,
-  the inline visual, the error banner on the web) put their outer edge on the lines and their words
-  inside their padding. **The composer is part of the column: its card's outer edge sits on the two
-  lines, like a card's, and its words sit inside its padding.** Inline code that starts a line keeps
-  its letters on the edge and its plate overhangs into the gutter by its own padding. A top-level
-  list's marker hangs in the gutter like a line's mark, so an item's words start on the edge; a
-  nested list steps in by the 22-point marker column. The turn line's drawing ends on the right
-  line: its time axis ends where its last segment does.
+- **Two lines.** Every row starts on the left line and everything that reaches the right ends on
+  the right line; a mark pushes its own line's words, by the mark column, and nothing else. Boxes
+  (code, tables, cards, the inline visual, the error banner on the web) put their outer edge on the
+  lines and their words inside their padding. **The composer is part of the column: its card's
+  outer edge sits on the two lines, like a card's, and its words sit inside its padding.** Inline
+  code that starts a line keeps its letters on the edge and its plate overhangs into the gutter by
+  its own padding. A top-level list's marker starts on the line and its words one marker column
+  in; a nested list steps in by another marker column per level. The turn line's drawing ends on
+  the right line: its time axis ends where its last segment does.
+- **A reply streams where it rests.** The answer being written is plain prose in its final place
+  from its first word: no card, fill or padding while it streams, and nothing beside it that
+  narrows it. Its caret sits at the end of its last line, not on a line of its own. Finishing
+  changes nothing about its layout (both apps test it).
 
 ### Lines
 
