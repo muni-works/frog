@@ -18,7 +18,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import WebSocket from "ws";
 import { startMock } from "./mock/mock-gateway.mjs";
-import { chrome } from "./chrome.ts";
+import { chrome, quietLogger } from "./chrome.ts";
 import { open, pause, until, type Page } from "./cdp.ts";
 
 const skip = chrome ? false : "no Chrome on this machine";
@@ -52,7 +52,7 @@ before(async () => {
   process.env.GATEWAY = api;
   process.env.VITE_API = `http://127.0.0.1:${port}`;
   const { createServer } = await import("vite");
-  const server = await createServer({ root: fileURLToPath(new URL("..", import.meta.url)), logLevel: "error", server: { port, host: "127.0.0.1", strictPort: true } });
+  const server = await createServer({ root: fileURLToPath(new URL("..", import.meta.url)), customLogger: await quietLogger(), server: { port, host: "127.0.0.1", strictPort: true } });
   await server.listen();
   vite = server;
   origin = `http://127.0.0.1:${port}`;
@@ -68,8 +68,7 @@ before(async () => {
   ws.close();
 });
 after(async () => {
-  await vite?.close();
-  await mock?.close();
+  await Promise.allSettled([vite?.close(), mock?.close()]);
   if (dir) rmSync(dir, { recursive: true, force: true });
 });
 

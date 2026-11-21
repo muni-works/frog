@@ -1206,8 +1206,10 @@ impl Panes {
     /// A shell with markers waits for its marker, not for output to settle: an rc that prints
     /// and then works for a while (oh-my-zsh's update check fetches before it asks) goes quiet
     /// long before its prompt, and a command typed then lands in the rc and reads the rc's own
-    /// first prompt as its end.
-    async fn wait_ready(&self, id: &str) {
+    /// first prompt as its end. It waits as long as the run would wait for its command
+    /// (`budget`, at least 5 s): a shell slower than a fixed floor to start (a loaded CI runner)
+    /// got the command typed early, echoed onto its first prompt line.
+    async fn wait_ready(&self, id: &str, budget: Duration) {
         let (grid, marks) = {
             let s = self.state.lock().unwrap();
             let Some(t) = s.panes.get(id).and_then(|p| p.term.as_ref()) else {
@@ -1215,8 +1217,10 @@ impl Panes {
             };
             (t.grid.clone(), t._rc.is_some())
         };
+        let floor = Duration::from_secs(5);
+        let limit = if marks { budget.max(floor) } else { floor };
         let started = Instant::now();
-        while started.elapsed() < Duration::from_secs(5) {
+        while started.elapsed() < limit {
             {
                 let g = grid.lock().unwrap();
                 if g.exit.is_some() {
@@ -1234,7 +1238,7 @@ impl Panes {
     }
 
     async fn run(&self, id: &str, command: &str, wait: Duration) -> Result<Output> {
-        self.wait_ready(id).await;
+        self.wait_ready(id, wait).await;
         let (grid, mark) = {
             let mut s = self.state.lock().unwrap();
             let t = s
@@ -1819,6 +1823,26 @@ mod tests {
     async fn terminal_run_waits_out_a_slow_noisy_rc() {
         let rc = "echo \"[oh-my-zsh] It's time to update!\"\nsleep 1.5\necho rc-done\n";
         let Some((panes, _rx, home)) = hermetic_shell(rc) else {
+            return;
+        };
+        let out = panes
+            .terminal(
+                &json!({ "action": "run", "command": "echo hi-$((20+3))", "wait_ms": 15000 }),
+                false,
+            )
+            .await
+            .unwrap();
+        assert_eq!(out.content.trim(), "hi-23", "{}", out.content);
+        panes.shutdown();
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    /// A shell slower to its first prompt than the readiness wait's floor (a loaded CI runner,
+    /// a heavy rc): the command still waits for that prompt, so its output is only its own and
+    /// not the prompt line the early keystrokes were echoed onto.
+    #[tokio::test]
+    async fn terminal_run_waits_for_a_slow_first_prompt() {
+        let Some((panes, _rx, home)) = hermetic_shell("sleep 6\n") else {
             return;
         };
         let out = panes

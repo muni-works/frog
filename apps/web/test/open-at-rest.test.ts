@@ -14,7 +14,7 @@ import { createServer, type Server } from "node:http";
 import { createServer as listen } from "node:net";
 import { fileURLToPath } from "node:url";
 import { accept } from "./mock/ws.mjs";
-import { chrome } from "./chrome.ts";
+import { chrome, closer, quietLogger } from "./chrome.ts";
 import { open, pause, until, type Page } from "./cdp.ts";
 
 const skip = chrome ? false : "no Chrome on this machine";
@@ -81,6 +81,7 @@ function gateway(sessions: Record<string, { open: boolean }>): Server {
 }
 
 let gw: Server | undefined;
+let closeGw: (() => Promise<void>) | undefined;
 let vite: { close: () => Promise<void> } | undefined;
 let origin = "";
 
@@ -88,19 +89,19 @@ before(async () => {
   if (!chrome) return;
   const gport = await freePort();
   gw = gateway({ s_long: { open: false }, s_live: { open: true } });
+  closeGw = closer(gw);
   await new Promise<void>((r) => gw!.listen(gport, "127.0.0.1", r));
   const port = await freePort();
   process.env.GATEWAY = `http://127.0.0.1:${gport}`;
   process.env.VITE_API = `http://127.0.0.1:${port}`;
   const { createServer: viteServer } = await import("vite");
-  const server = await viteServer({ root: fileURLToPath(new URL("..", import.meta.url)), logLevel: "error", server: { port, host: "127.0.0.1", strictPort: true } });
+  const server = await viteServer({ root: fileURLToPath(new URL("..", import.meta.url)), customLogger: await quietLogger(), server: { port, host: "127.0.0.1", strictPort: true } });
   await server.listen();
   vite = server;
   origin = `http://127.0.0.1:${port}`;
 });
 after(async () => {
-  await vite?.close();
-  await new Promise((r) => (gw ? gw.close(r) : r(null)));
+  await Promise.allSettled([vite?.close(), closeGw?.()]);
 });
 
 // Every frame from the first: how many turns the transcript has drawn, and how far its view is
