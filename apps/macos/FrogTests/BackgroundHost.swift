@@ -134,7 +134,10 @@ final class BackgroundGuard: NSObject, @preconcurrency XCTestObservation {
             XCTFail("Test left a sidecar running: \(left.map { "\(($0.path as NSString).lastPathComponent) (pid \($0.pid))" }.joined(separator: ", ")). Tests run with FROG_SIDECARS=off; a test that needs one sets FROG_SIDECARS=ephemeral and stops it.")
         }
     }
-    func testCaseDidFinish(_ testCase: XCTestCase) { current = nil }
+    func testCaseDidFinish(_ testCase: XCTestCase) {
+        current = nil
+        ReleaseClosedWindows.run()
+    }
 
     @objc private func becameActive(_ note: Notification) {
         fail("the test host became the active app (it took the keyboard and menu bar)")
@@ -154,6 +157,23 @@ final class BackgroundGuard: NSObject, @preconcurrency XCTestObservation {
         let message = "Test run left the background: \(what)"
         guard let current else { return print(message) }
         current.record(XCTIssue(type: .assertionFailure, compactDescription: message))
+    }
+}
+
+/// A test's window, once it's off screen, lets go of its SwiftUI. Tests close their windows with
+/// `isReleasedWhenClosed = false`, and a closed window can stay alive (a view in it holds it):
+/// its hosting view kept observing the shared stores, so every later test that staged sessions
+/// re-rendered each leftover workspace's sidebar. By SidebarHoverBadgeTests, 110 classes in, ten
+/// such windows built its row 74 to 218 times in a second and held the main actor long enough
+/// that the row's 450 ms hover took 0.66 to 1.13 s (2026-11-21; alone: 1 to 3 bodies, 0.455 s).
+/// Only plain `NSWindow`s a test made: the app's own scene windows and the system's are left be.
+@MainActor
+enum ReleaseClosedWindows {
+    static func run() {
+        for w in NSApp.windows where type(of: w) == NSWindow.self && !w.isVisible {
+            guard let content = w.contentView, String(describing: type(of: content)).hasPrefix("NSHostingView") else { continue }
+            w.contentView = nil
+        }
     }
 }
 

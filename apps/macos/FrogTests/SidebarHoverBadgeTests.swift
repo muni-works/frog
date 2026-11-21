@@ -11,9 +11,8 @@ import XCTest
 final class SidebarHoverBadgeTests: XCTestCase {
     /// Each test's window, closed in tearDown. One left ordered in keeps its row alive: an
     /// expanded row from the test before kept building bodies into the shared probe, so the
-    /// next test saw "expanded" before its own 450 ms (37 of 80 local runs, 2026-11-20).
+    /// next test saw "expanded" before its own 450 ms (37 of 80 runs of the class, 20 iterations alone, 2026-11-20).
     private var windows: [NSWindow] = []
-    private var shownAt = Date() // PROBE
 
     override func setUp() {
         super.setUp()
@@ -23,10 +22,6 @@ final class SidebarHoverBadgeTests: XCTestCase {
     }
 
     override func tearDown() {
-        do { // PROBE
-            let f = { (d: Date?) in d.map { String(format: "%.3f", $0.timeIntervalSince(self.shownAt)) } ?? "nil" }
-            NSLog("HOVERPROBE %@ started=%@ expanded=%@ bodies=%d expandedBodies=%d now=%@ load=%.1f", name, f(SidebarProbe.hoverStarted), f(SidebarProbe.expandedAt), SidebarProbe.rowBodies, SidebarProbe.expandedBodies, f(Date()), TestRunner.loadPerCore)
-        }
         for w in windows {
             w.contentView = nil
             w.close()
@@ -76,7 +71,6 @@ final class SidebarHoverBadgeTests: XCTestCase {
         window.orderInForTest()
         windows.append(window)
         host.layoutSubtreeIfNeeded()
-        shownAt = Date() // PROBE
         return host
     }
 

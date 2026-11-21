@@ -8,7 +8,8 @@ import Foundation
 enum SidebarProbe {
     /// Only this session's row counts. Every row bumps the same statics, so without it a row
     /// left alive by an earlier test (its window still ordered in, already expanded) counted
-    /// into the next test's "before the expand" (2026-11-20: 37 of 80 local runs).
+    /// into the next test's "before the expand" (2026-11-20: 37 of 80 runs of the class, 20
+    /// iterations alone).
     static var session: String?
     /// Compact row bodies built (`CompactSessionRow`).
     static var rowBodies = 0
