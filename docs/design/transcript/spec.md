@@ -77,24 +77,45 @@ These are `TurnSpace.Scale`'s values. `rowGroup` (8 / 5) goes away: lines in a r
 - The column is 720 wide with a 32 gutter each side (`TurnSpace.measure`, `gutter`).
 - **Prose stops at 640.** Paragraphs, lists and headings cap at 640; code, tables, diffs, cards,
   the prompt bubble (still at most 540, right-aligned) and the composer use the full 720.
-- **One left edge.** A line's mark (its icon, the live dot, a fold's chevron) sits in an 18-point
-  box hung 26 points into the gutter. A line's first word, a thought, the stats and prose all
-  start at the column's edge. This replaces `TurnSpace.Inset.iconColumn`.
-- **When the gutter is under 26** (a narrow split pane, the phone layout): marks come back
-  inside the column, all text indents by 26 together, and prose still shares one edge with the
-  lines. Never hang a mark off-screen or under a neighbouring pane. Measure the gutter at the
-  minimum pane width on the Mac and at 375 on the web, and write the numbers in the PR.
+- **One left line, flush.** Every row starts on the column's left line: a line's mark (its icon,
+  the live dot, a fold's chevron) has its 18-point box there, left-aligned in it, and a list's
+  marker starts there too. Nothing hangs in the gutter. A marked line's words follow its mark one
+  mark column in (`Layout.hang`, 26: the 18-point box and an 8 gap), and what opens under a line
+  (its output, its caption) and the stats under the live row start there with them. Rows with no
+  mark (prose, headings, the footer, a note, the stats under a writing answer) start on the line.
+  A list item's words start one marker column in (`Layout.marker`, 22). This replaced "marks
+  hang 26 into the gutter" (Cam, 2026-11-21) and `TurnSpace.Inset.iconColumn` before it.
+- **The same in a narrow pane** (a split, the phone layout): only the gutter narrows. Since
+  nothing hangs, nothing moves in when the gutter is under 26.
 - A line's hover plate is 24 tall with a 7 corner and bleeds 6 past the text on each side, so
   words don't move when it appears.
-- **Two lines.** Every row's text starts on the left line and everything that reaches the right
-  ends on the right line; marks hang in the gutter and never push text. Boxes (code, tables, cards,
-  the inline visual, the error banner on the web) put their outer edge on the lines and their words
-  inside their padding. **The composer is part of the column: its card's outer edge sits on the two
-  lines, like a card's, and its words sit inside its padding.** Inline code that starts a line keeps
-  its letters on the edge and its plate overhangs into the gutter by its own padding. A top-level
-  list's marker hangs in the gutter like a line's mark, so an item's words start on the edge; a
-  nested list steps in by the 22-point marker column. The turn line's drawing ends on the right
-  line: its time axis ends where its last segment does.
+- **Two lines.** Every row starts on the left line and everything that reaches the right ends on
+  the right line; a mark pushes its own line's words, by the mark column, and nothing else. Boxes
+  (code, tables, cards, the inline visual, the error banner on the web) put their outer edge on the
+  lines and their words inside their padding. **The composer is part of the column: its card's
+  outer edge sits on the two lines, like a card's, and its words sit inside its padding.** Inline
+  code that starts a line keeps its letters on the edge and its plate overhangs into the gutter by
+  its own padding. A top-level list's marker starts on the line and its words one marker column
+  in; a nested list steps in by another marker column per level. The turn line's drawing ends on
+  the right line: its time axis ends where its last segment does.
+- **A reply streams where it rests.** The answer being written is plain prose in its final place
+  from its first word: no card, fill or padding while it streams, and nothing beside it that
+  narrows it. Finishing changes nothing about its layout (both apps test it).
+- **The pen writes it in, the same on both apps** (the Mac's `InkReveal`, the web's `ink.ts`).
+  Everything that has arrived is laid out at once and what the pen hasn't reached is drawn clear,
+  so nothing reflows. The pen moves no slower than reading pace (42 characters a second), at
+  most 0.32 s behind arrival, a word at a time, with a breath after a sentence. Each word inks
+  in from frog green, faint, to its own colour over 0.42 s. The pen is a 3-point green bar just
+  past the last word; it breathes while the model is quiet and fades when the answer is done.
+  Code boxes, tables and inline code's plates appear when the pen reaches them. Under reduced
+  motion, or a stream above 1,200 characters a second, text simply appears, with no pen.
+- **Half-finished markdown waits.** While a reply streams, the end of its last block is held
+  back while it's an unclosed `` ` ``, `**`, `~~` or link, a list or heading marker alone, or a
+  fence half typed, so nothing shows raw and then changes. The cases are
+  `docs/design/transcript/holdback.json`; both apps run them.
+- **New rows fade in.** A row that arrives while the turn runs fades in where it lands over
+  180 ms, opacity only, so the answer's first words fade in as the live row cuts away. A fold,
+  which replaces lines already there, doesn't.
 
 ### Lines
 
@@ -138,6 +159,19 @@ each part 10 apart with no separator character (Cam, 5b76372f: metadata gets spa
 middle dots). Phase 3 adds the turn line at
 its right end. The web's `.turn-foot` and the Mac's footer become this; the web's `.turn-card`
 popover is replaced by the turn panel in phase 3 and stays until then.
+
+- **Every ended turn that used anything ends on its footer** (Cam, 2026-11-21: "if a turn was
+  interrupted, it should still show the post-turn response summary footer"): finished, stopped,
+  failed, out of credit, at a limit. A stopped turn's footer says **Stopped** first, in `muted`
+  like the model, and no other row says it; any other ending keeps its own words (the error, the
+  limit) above the footer. A turn that used nothing (stopped before any output) has no footer,
+  just "Stopped".
+- **What a stop cut off counts.** A model call stopped mid-stream never reports its usage, so
+  the engine sends its estimate (`usage.cut`: what had streamed, and the prompt it was sent).
+  The footer adds it in and its figures read "about 1,240 tokens", "about $0.02"; the hover
+  says the stopped call's share is counted from what had streamed.
+- **The stats become the footer in place.** Under a writing answer the stats sit where its
+  footer will (the footer's gap, not 2), so finishing swaps the words and moves nothing.
 
 ### Following
 
@@ -219,7 +253,8 @@ separator character, as the footer. Time shows after
 the first second. The token figure while a call is streaming is counted from what has arrived
 and is replaced by the provider's number when the call ends; it must never be shown as exact
 while it is a count of chunks (no decimals, and the hover says "so far"). While the answer
-writes there is no row and the same stats sit under the text.
+writes there is no row and the same stats sit under the text, where its footer will be (see "The
+footer").
 
 ### Hover and opening
 

@@ -614,6 +614,57 @@ impl Meter {
     }
 }
 
+/// Holds this Mac's draw above idle to an average of `limit_w` watts, for an off-grid or garage
+/// setup. A budget, not a clamp: each local model call spends the joules it drew above idle,
+/// the budget refills at the limit, and the next call waits out any debt first. Peaks still go
+/// as high as the chip goes; the average over a few calls is what's held.
+pub struct Throttle {
+    pub limit_w: f64,
+    last: Option<Mark>,
+    debt_j: f64,
+}
+
+/// The longest one wait gets, so a turn never looks hung for long; the rest carries over.
+pub const MAX_WAIT_SECS: f64 = 120.0;
+
+impl Throttle {
+    pub fn new(limit_w: f64) -> Option<Throttle> {
+        (limit_w > 0.0).then_some(Throttle {
+            limit_w,
+            last: None,
+            debt_j: 0.0,
+        })
+    }
+
+    /// How long to wait before the next local call. `None` idle (no baseline yet) waits nothing.
+    pub fn before_call(&mut self, meter: &Meter, idle_w: Option<f64>) -> std::time::Duration {
+        let now = meter.mark();
+        let Some(idle_w) = idle_w else {
+            self.last = Some(now);
+            return std::time::Duration::ZERO;
+        };
+        let (spent_j, secs) = match &self.last {
+            Some(from) => {
+                let r = meter.since(from);
+                ((r.system_j - idle_w * r.secs).max(0.0), r.secs)
+            }
+            None => (0.0, 0.0),
+        };
+        let (debt, wait) = owed(self.debt_j, spent_j, secs, self.limit_w);
+        // The wait refills the budget at the limit; count it now so the next call doesn't.
+        self.debt_j = (debt - wait * self.limit_w).max(0.0);
+        self.last = Some(meter.mark());
+        std::time::Duration::from_secs_f64(wait)
+    }
+}
+
+/// The new debt in joules and the seconds to wait: `spent_j` over `secs` added to `debt_j`, less
+/// what the limit allowed in that time; the wait pays it back at `limit_w`, up to the max.
+pub fn owed(debt_j: f64, spent_j: f64, secs: f64, limit_w: f64) -> (f64, f64) {
+    let debt = (debt_j + spent_j - limit_w * secs).max(0.0);
+    (debt, (debt / limit_w).min(MAX_WAIT_SECS))
+}
+
 /// Energy a hosted model's data center spends on a request, estimated from its token counts.
 /// Nobody publishes measured per-request energy for most models, so each gets the best
 /// estimate we can source, per model:
@@ -780,6 +831,17 @@ fn median(mut v: Vec<f64>) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn throttle_waits_out_what_went_over() {
+        // 1 kJ over 10 s at a 50 W limit: 500 J over, 10 s to pay back.
+        assert_eq!(owed(0.0, 1000.0, 10.0, 50.0), (500.0, 10.0));
+        // Under the limit owes nothing, and banks nothing either.
+        assert_eq!(owed(0.0, 100.0, 10.0, 50.0), (0.0, 0.0));
+        // Debt carries; one wait never passes the max.
+        assert_eq!(owed(100_000.0, 0.0, 0.0, 50.0).1, MAX_WAIT_SECS);
+        assert!(Throttle::new(0.0).is_none());
+    }
 
     #[test]
     fn idle_is_the_median_of_enough_seconds() {

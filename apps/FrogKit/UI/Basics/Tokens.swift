@@ -157,11 +157,11 @@ enum Tokens {
             static let gutter: CGFloat = 32
             /// The gutter in a pane under 480 wide (the phone, a narrow split): under hang, so marks come inside.
             static let gutterNarrow: CGFloat = 16
-            /// How far a line's mark hangs into the gutter. Under this much gutter, marks come inside and all text indents by it.
+            /// The mark column: a line's mark sits on the column's left line and its words start this far in (18 for the mark, 8 gap).
             static let hang: CGFloat = 26
             /// A line's mark box (icon, live dot, fold chevron).
             static let mark: CGFloat = 18
-            /// A list's marker column: a nested list steps in by this. A top-level list's marker hangs in the gutter, so its words start on the edge.
+            /// A list's marker column: a list's marker starts on the line and its words this far in; a nested list steps in by this per level.
             static let marker: CGFloat = 22
             /// A line's hover plate: its height.
             static let plate: CGFloat = 24

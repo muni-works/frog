@@ -8,6 +8,8 @@ import { Markdown } from './Markdown'
 import { Hunks } from './Diff'
 import { ICON } from './icons'
 import { endError } from '../store'
+import { used } from '../usage'
+import { useInk } from './ink'
 import { resumedLine } from '../wall'
 import { TurnFooter } from './TurnFooter'
 import { WidgetCard } from './Widget'
@@ -46,7 +48,7 @@ function clip(out: string) {
   return [...ls.slice(0, half), `… ${ls.length - MAX_LINES} more lines …`, ...ls.slice(-half)].join('\n')
 }
 
-// Each tool's mark: the icon hung in the gutter beside its line. Its words come from the shared
+// Each tool's mark: the icon on the column's line, before its words. Its words come from the shared
 // verb table (rows.ts, docs/design/transcript/verbs.json), never from here.
 const MARK: Record<string, string> = {
   bash: ICON.terminal, '!': ICON.terminal, read: ICON.doc,
@@ -534,8 +536,12 @@ const TurnView = memo(function TurnView({ turn, index, live, ask, question, runn
       // An empty thought has nothing to open, and a blank reply nothing to read: neither draws.
       return e.text.trim() ? <ThinkingLine e={e} label={thoughtLabel(e, turn.reason?.type === 'cancelled' ? turn.endAt : undefined, thinkMsOf(turn, e.id))} /> : null
     }
-    if (e.kind === 'message' && e.done && !e.text.trim()) return null
-    if (e.kind === 'message') return <div className="say" data-row="prose" data-item={e.id}><Markdown text={e.text} />{!e.done && <span className="caret" />}</div>
+    // A message the turn ended in the middle of (stopped) never completes: what it had written
+    // stays, without a caret; with nothing written it draws nothing.
+    if (e.kind === 'message' && (e.done || !(live && running)) && !e.text.trim()) return null
+    // Drawn where it rests from its first word (spec, "A reply streams where it rests"), written in
+    // by the pen (ink.ts) over text already laid out, so finishing moves nothing.
+    if (e.kind === 'message') return <Say e={e} writing={!e.done && live && running} />
     if (question?.item === e.id) return <div data-row="box"><QuestionCard q={question} onAnswer={cb.onAnswer} /></div>
     const asking = ask?.item === e.id ? ask : null
     const diff = e.diff ?? asking?.preview
@@ -549,12 +555,13 @@ const TurnView = memo(function TurnView({ turn, index, live, ask, question, runn
     if (e.applied) return <AppliedLine applied={e.applied} onUndo={cb.onUndo} />
     if (e.widget && e.outcome === 'ok') return <div data-row="box"><WidgetCard widget={e.widget} onPrompt={cb.onPrompt} /></div>
     // A step still running is the live row ("Editing src/retry.rs"); it becomes a line when done.
-    if (!e.done && live && running) return null
+    // One the turn ended in the middle of (stopped) never completes: no line, as on the Mac.
+    if (!e.done) return null
     return <ToolLine e={e} diff={diff} onShowChange={cb.onShowChange} />
   }
   return (
     // data-turn-index: where the turn rail finds and jumps to a turn (docs/design/chrome/spec.md).
-    <div className="turn" data-turn-index={index}>
+    <div className="turn" data-turn-index={index} data-running={live && running ? '' : undefined}>
       {/* A turn the credit wall resumed (Op::Continue with wall.ts's note) is one quiet line, not a message. */}
       {resumedLine(turn.input) ? <div className="turn-note" data-row="resumed" role="status">{resumedLine(turn.input)}</div> : (
       <div className="ask-block">
@@ -581,8 +588,9 @@ const TurnView = memo(function TurnView({ turn, index, live, ask, question, runn
       {foldRuns(rows(turn.entries, ask, question).filter((r) => r.e.id !== turn.noted?.item)).map((r) => r.kind === 'fold'
         ? <Fold key={r.id} steps={r.steps.map((x) => x.e)} render={(e) => <ToolLine key={e.id} e={e} onShowChange={cb.onShowChange} />} />
         : <Fragment key={r.id}>{draw(r.e, turn.entries, r.n)}</Fragment>)}
-      {turn.usage && (turn.reason?.type === 'complete' || turn.reason?.type === 'denied') && (
-        <TurnFooter usage={turn.usage} turn={turn} models={models} pinned={false} credit={credit}
+      {/* A finished or stopped turn ends on its footer; a stopped one's says "Stopped" first. */}
+      {footerLeads(turn) && (
+        <TurnFooter usage={turn.usage!} turn={turn} models={models} pinned={false} credit={credit} stopped={turn.reason?.type === 'cancelled'}
           answer={[...turn.entries].reverse().find((e) => e.kind === 'message')?.text ?? ''}
           onRetry={live && !running && hasRetry ? cb.onRetry : undefined} />
       )}
@@ -598,7 +606,7 @@ const TurnView = memo(function TurnView({ turn, index, live, ask, question, runn
       </div>
       {/* How the turn ended stays with the turn: stopping a later one doesn't clear it. */}
       {/* A think stopped mid-way already says so on its own line ("Stopped after 12s"). */}
-      {turn.reason?.type === 'cancelled' && !(turn.entries.at(-1)?.kind === 'reasoning' && !turn.entries.at(-1)?.done) && <div className="turn-note">Stopped</div>}
+      {turn.reason?.type === 'cancelled' && !used(turn.usage) && !(turn.entries.at(-1)?.kind === 'reasoning' && !turn.entries.at(-1)?.done) && <div className="turn-note">Stopped</div>}
       {/* A denied step ends the turn: say so in words (the engine's own sentence when it sends one). */}
       {endNote(turn.reason) && <div className="det wrap turn-note">{endNote(turn.reason)}</div>}
       {/* Any other ending that isn't a finished answer says so, never silence. */}
@@ -615,9 +623,35 @@ const TurnView = memo(function TurnView({ turn, index, live, ask, question, runn
           {live && !running && hasRetry && <button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={cb.onRetry}>Try again</button>}
         </div>
       )}
+      {/* Any other ending says what happened above; the turn's summary is still its last line
+          (Cam, 2026-11-21: an interrupted turn keeps its footer). */}
+      {turn.reason && !footerLeads(turn) && used(turn.usage) && (
+        <div className="reply-block turn-end-foot">
+          <TurnFooter usage={turn.usage!} turn={turn} models={models} pinned={false} credit={credit} answer="" />
+        </div>
+      )}
     </div>
   )
 })
+
+/** A reply: plain prose where it will rest from its first word, written in by the pen (ink.ts). */
+function Say({ e, writing }: { e: Entry; writing: boolean }) {
+  const say = useRef<HTMLDivElement>(null)
+  const pen = useRef<HTMLSpanElement>(null)
+  useInk(say, pen, e.text, writing)
+  return (
+    <div ref={say} className="say" data-row="prose" data-item={e.id} data-writing={writing ? '' : undefined}>
+      <Markdown text={e.text} streaming={writing} />
+      <span ref={pen} className="ink-pen" aria-hidden="true" />
+    </div>
+  )
+}
+
+/** The footer is the reply's own last line: a finished turn's, or a stopped one's that used anything. */
+function footerLeads(turn: Turn): boolean {
+  const r = turn.reason?.type
+  return !!turn.usage && (r === 'complete' || r === 'denied' || (r === 'cancelled' && used(turn.usage)))
+}
 
 /** WhatsApp-style receipts on your messages: a clock while sending, one tick on the wire, two
  * once Frog has started on it. */

@@ -3,7 +3,7 @@ import SwiftUI
 import XCTest
 @testable import Frog
 
-/// The typing bubble mid-stream and its handoff to the plain row, rendered for review:
+/// The answer mid-stream and finished (the same plain row; no bubble since 2026-11-21), for review:
 /// `$TMPDIR/frog-snapshots/typing-{writing,settled}.png`.
 @MainActor
 final class TypingBubbleSnapshotTests: XCTestCase {

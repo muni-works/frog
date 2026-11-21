@@ -2,6 +2,9 @@
 // Checks a transcript edges dump (edges.mjs on the web, the Mac's -FrogEdges): every element with
 // a claim sits on its line within the tolerance (0.5 pt), and every kind of row the edge fixture
 // has is there, so a row that never drew can't pass by being absent. Prints the table either way.
+// The lines (docs/design/transcript/spec.md, "One left line, flush"): marks, list markers, prose
+// and boxes on the left line; a marked line's words one mark column (`hang`) in; a list item's one
+// marker column (`marker`) in; whatever reaches the right on the right line.
 //
 //   node check-edges.mjs <edges.json> [more.json…] [--tolerance 0.5] [--no-require]
 import { readFileSync } from "node:fs";
@@ -9,17 +12,18 @@ import { readFileSync } from "node:fs";
 /** The kinds edges-fixture.mjs draws, each of which must appear in a dump of it. */
 export const REQUIRED = [
   "prompt", "thought", "fold", "line:command", "line:edit", "line:search", "line:web", "line:other",
-  "prose", "prose (opens with code)", "heading", "list item", "code", "table", "visual", "footer",
+  "prose", "prose (opens with code)", "heading", "list item", "list marker", "code", "table", "visual", "footer",
   "error", "question card", "card", "live", "stats", "composer",
 ];
 
 /** Where an element should be for a claim, and how far off it is (signed, points). */
 function offBy(e, claim, d) {
-  if (claim === "text") return e.left - d.indent;
-  if (claim === "box") return e.left;
+  if (claim === "text" || claim === "box") return e.left;
+  if (claim === "after") return e.left - d.hang;
+  if (claim === "item") return e.left - d.marker;
+  if (claim === "before") return Math.max(0, e.right - d.hang);
   if (claim === "right") return e.right - d.column;
-  if (claim === "hung") return Math.max(0, e.right - d.indent);
-  return 0;
+  return Infinity;
 }
 
 /** Each claim's result: { e, claim, off, ok }. */
@@ -33,7 +37,7 @@ export function results(d, tolerance = 0.5) {
 /** Problems with a dump, as lines; empty when it passes. */
 export function check(d, { tolerance = 0.5, require = true } = {}) {
   const out = [];
-  if (d.format !== "frog-transcript-edges/1") out.push(`unknown format ${d.format}`);
+  if (d.format !== "frog-transcript-edges/2") out.push(`unknown format ${d.format}`);
   for (const r of results(d, tolerance)) if (!r.ok) out.push(`${r.e.kind} ${r.e.part} "${r.e.text}": ${r.claim} off by ${r.off}`);
   if (require) {
     const seen = new Set(d.elements.map((e) => e.kind));
@@ -59,7 +63,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   let bad = 0;
   for (const f of files) {
     const d = JSON.parse(readFileSync(f, "utf8"));
-    console.log(`\n### ${d.app} ${d.width} × ${d.height} (column ${d.column}, text indent ${d.indent})\n\n${table(d, tolerance)}\n`);
+    console.log(`\n### ${d.app} ${d.width} × ${d.height} (column ${d.column}, mark column ${d.hang}, marker column ${d.marker})\n\n${table(d, tolerance)}\n`);
     const p = check(d, { tolerance, require: !args.includes("--no-require") });
     if (p.length) { bad++; console.error(`${f}: ${p.length} off (tolerance ${tolerance} pt):\n  ${p.join("\n  ")}`); }
     else console.log(`${f}: every element on its line, within ${tolerance} pt`);

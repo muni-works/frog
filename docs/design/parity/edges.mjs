@@ -6,14 +6,16 @@
 //   node edges.mjs <url> <out.json> <width> <height> [light|dark]
 //   EDGES_WAIT=20000 (ms at most to let the session load)  EDGES_STORAGE='{"frog.inspector":"1"}'
 //
-// Format `frog-transcript-edges/1`: { format, app, width, height, look, column, indent,
+// Format `frog-transcript-edges/2`: { format, app, width, height, look, column, hang, marker,
 // elements: [{ kind, part, text, left, right, claims }] }. Lengths are points (CSS px), rounded to
-// 0.1, from the column's box edge: 0 is the left line for boxes, `indent` the left line for text
-// (0 unless the gutter is too narrow for marks to hang), `column` the right line. `claims` say
-// which line an element must sit on: "text" (left = indent), "box" (left = 0), "right" (right =
-// column), "hung" (right <= indent: a mark in the gutter, never pushing text). An element with no
-// claims is recorded for the table only (a card's title inside its padding, an inline code chip's
-// background).
+// 0.1, from the column's left line (0); `column` is the right line, `hang` the mark column (a
+// marked line's words start there) and `marker` the marker column (a list item's words). `claims`
+// say where an element must sit (spec, "One left line, flush"): "text" and "box" (left = 0: prose,
+// a mark, a list's marker, a box), "after" (left = hang: a marked line's words, what opens under
+// them, the live row's stats), "item" (left = marker), "before" (right <= hang: a mark never
+// pushes into its words), "right" (right = column). An element with no claims is recorded for the
+// table only (a card's title inside its padding, an inline code chip's background).
+// /1 had `indent` and "hung" (marks in the gutter) until 2026-11-21.
 import { spawn } from "node:child_process";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -27,7 +29,8 @@ export function measureEdges() {
   const cs = getComputedStyle(col);
   const edge = col.getBoundingClientRect().left + parseFloat(cs.paddingLeft);
   const column = col.getBoundingClientRect().width - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
-  const indent = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--tx-indent")) || parseFloat(getComputedStyle(col).getPropertyValue("--tx-indent")) || 0;
+  const hang = parseFloat(getComputedStyle(col).getPropertyValue("--tx-hang")) || 0;
+  const marker = parseFloat(getComputedStyle(col).getPropertyValue("--tx-marker")) || 0;
   const clean = (s) => (s ?? "").replace(/\s+/g, " ").trim();
   const skip = ".hover-row, .line-acts, .hover-acts, .line-mark, .ticks, .turn-card, [aria-hidden='true']";
   // The visible text nodes of an element, in order, minus hover actions and marks.
@@ -78,8 +81,8 @@ export function measureEdges() {
     if (el.matches(".line-row")) {
       if (el.closest(".line-open")) continue;
       const kind = el.dataset.kind === "fold" ? "fold" : el.dataset.kind === "thought" ? "thought" : `line:${el.dataset.kind ?? "?"}`;
-      word(kind, "words", el.querySelector(".line-plate .line"), ["text"]);
-      box(kind, "mark", el.querySelector(".line-plate .line-mark"), ["hung"], " ");
+      word(kind, "words", el.querySelector(".line-plate .line"), ["after"]);
+      box(kind, "mark", el.querySelector(".line-plate .line-mark"), ["box", "before"], " ");
       // Without hover (touch) a row's actions are always drawn, in the row after its result
       // (apps/web/src/phone.css), so they, not the result, are what reaches the right edge.
       const acts = el.querySelector(".line-plate > .line-acts");
@@ -88,20 +91,21 @@ export function measureEdges() {
       if (drawn) box(kind, "actions (no hover)", acts, ["right"], " ");
       const open = el.querySelector(":scope > .line-open");
       if (open) {
-        word(kind, "opened: failing tests", open.querySelector(".line-failing"), ["text"]);
-        // Under its line's words: on the text line (at 26 in a narrow pane, as on the Mac).
-        box(kind, "opened: output box", open.querySelector(".line-out, .line-box, .line-said"), ["text", "right"]);
-        word(kind, "opened: caption", open.querySelector(".line-foot > span"), ["text"]);
+        // Under its line's words, one mark column in.
+        word(kind, "opened: failing tests", open.querySelector(".line-failing"), ["after"]);
+        box(kind, "opened: output box", open.querySelector(".line-out, .line-box, .line-said"), ["after", "right"]);
+        word(kind, "opened: caption", open.querySelector(".line-foot > span"), ["after"]);
       }
       continue;
     }
     if (el.matches(".live-row, .live-tail")) {
       if (el.matches(".live-row")) {
-        word("live", "words", el.querySelector(".line"), ["text"]);
-        box("live", "mark", el.querySelector(".line-mark"), ["hung"], " ");
+        word("live", "words", el.querySelector(".line"), ["after"]);
+        box("live", "mark", el.querySelector(".line-mark"), ["box", "before"], " ");
       }
+      // Under the live row: with its words. Under a writing answer: on the line, under its prose.
       const st = el.querySelector(".live-stats");
-      if (st) { word("stats", "words", st, ["text"]); graph("stats", st); }
+      if (st) { word("stats", "words", st, [el.matches(".live-row") ? "after" : "text"]); graph("stats", st); }
       continue;
     }
     if (el.matches(".turn-foot")) { word("footer", "words", el.querySelector(".turn-line") ?? el, ["text"]); graph("footer", el); continue; }
@@ -119,9 +123,11 @@ export function measureEdges() {
       for (const li of el.querySelectorAll(":scope > li")) {
         const k = ink(li);
         const dot = li.querySelector(":scope > .md-dot, :scope > .md-num");
-        // The item's words: past its own bullet span, if it draws one.
+        // A top-level item (depth 0): its marker on the line, its words one marker column in.
+        const top = (getComputedStyle(li).getPropertyValue("--d").trim() || "0") === "0";
         const words = dot ? (() => { const c = texts(li).filter((n) => !dot.contains(n)); return c.length ? { left: glyph(c[0], c[0].textContent.search(/\S/)).left } : null })() : k;
-        if (words) push("list item", "words", k?.text ?? "", words.left, k.right, ["text"]);
+        if (words) push(top ? "list item" : "list item (nested)", "words", k?.text ?? "", words.left, k.right, top ? ["item"] : []);
+        if (dot && top) word("list marker", "marker", dot, ["box"]);
       }
       continue;
     }
@@ -140,7 +146,7 @@ export function measureEdges() {
     if (ta) { const b = ta.getBoundingClientRect(), s = getComputedStyle(ta); push("composer", "text (inside)", ta.value || ta.placeholder, b.left + parseFloat(s.paddingLeft), b.right - parseFloat(s.paddingRight), []); }
   }
   const r1 = (v) => Math.round(v * 10) / 10;
-  return { column: r1(column), indent: r1(indent), elements: out.map((e) => ({ ...e, left: r1(e.left), right: r1(e.right) })) };
+  return { column: r1(column), hang: r1(hang), marker: r1(marker), elements: out.map((e) => ({ ...e, left: r1(e.left), right: r1(e.right) })) };
 }
 
 /** The page at `url` in headless Chrome at w × h (2×), measured: the dump without its header. */
@@ -186,7 +192,7 @@ export async function measureURL(url, w, h, look = "dark", { wait = 8000, storag
     ws.close();
     const v = res?.result?.value;
     if (!v || v.error) throw new Error(`edges.mjs: ${v?.error ?? JSON.stringify(res)}`);
-    return { format: "frog-transcript-edges/1", app: "web", width: +w, height: +h, look, ...v };
+    return { format: "frog-transcript-edges/2", app: "web", width: +w, height: +h, look, ...v };
   } finally {
     proc.kill();
     await new Promise((r) => proc.once("exit", r));
