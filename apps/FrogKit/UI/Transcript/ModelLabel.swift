@@ -176,6 +176,7 @@ extension ModelIdentity {
         case .wontFit(let needs, let has): "Needs \(needs) GB, this Mac has \(has)"
         case .notAllowed(let project): "\(project) keeps code on your devices"
         case .overCap: "This month's cloud cap is reached"
+        case .overEnergyCap: "Today's energy cap is reached"
         case .unreachable(let why): why
         }
     }
@@ -192,7 +193,7 @@ extension ModelIdentity.State {
         case .needsKey: "key"
         case .wontFit: "memorychip"
         case .notAllowed: "lock"
-        case .overCap: "pause.circle"
+        case .overCap, .overEnergyCap: "pause.circle"
         case .unreachable: "bolt.slash"
         }
     }
@@ -200,7 +201,7 @@ extension ModelIdentity.State {
     /// Shown, but not something you can pick.
     var dimmed: Bool {
         switch self {
-        case .wontFit, .notAllowed, .overCap, .unreachable: true
+        case .wontFit, .notAllowed, .overCap, .overEnergyCap, .unreachable: true
         default: false
         }
     }

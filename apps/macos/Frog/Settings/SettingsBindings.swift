@@ -68,6 +68,10 @@ enum SettingsBindings {
         // Usage
         case "spent": AnyView(SpentRow(row: row))
         case "monthly-cap": AnyView(CapRow(row: row))
+        case "energy-cap": AnyView(WattMenuRow(row: row, key: ModelStats.energyCapKey, unit: "Wh",
+                                               help: "Models on this Mac pause for the rest of the day at this much"))
+        case "power-limit": AnyView(WattMenuRow(row: row, key: ModelStats.powerLimitKey, unit: "W",
+                                                help: "Local models wait between steps to average this much above idle"))
         case "show-energy": AnyView(ToggleRow(row: row, key: ModelStats.energyKey, fallback: false))
         case "energy-chart": AnyView(EnergyRows(stats: stats))
         // Account

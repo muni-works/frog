@@ -281,6 +281,8 @@ struct PaneView: View {
                 r.done(.failed("\(now.name) needs a key for \(provider). Add it in frog's settings on your Mac."))
             case .overCap:
                 r.done(.failed("Cloud models are paused: this month's cap is reached. Change it in frog's settings on your Mac."))
+            case .overEnergyCap:
+                r.done(.failed("Models on this Mac are paused: today's energy cap is reached. Change it in frog's settings on your Mac."))
             }
         }
     }

@@ -72,11 +72,12 @@ final class ModelStats {
 
     /// The Mac's record, in place of this one's (the phone's side of `exported`); kept, so the
     /// numbers are there before the Mac is.
-    func adopt(_ data: Data, cap: Double) {
+    func adopt(_ data: Data, cap: Double, energyCap: Double = 0) {
         guard let s = try? JSONDecoder().decode(Store.self, from: data) else { return }
         store = Self.migrated(s).0
         save()
         monthlyCap = cap
+        dailyEnergyCap = energyCap
     }
 
     /// Remember what the models frog lists cost, so turns can be priced when they end.
@@ -317,6 +318,29 @@ final class ModelStats {
 
     /// Cloud models pause for the rest of the month once the cap is reached.
     var overCap: Bool { monthlyCap > 0 && spentThisMonth >= monthlyCap }
+
+    // MARK: Energy cap
+
+    static let energyCapKey = "dailyMacEnergyCap"
+    static let powerLimitKey = "macPowerLimit"
+
+    /// Watt-hours a day this Mac may spend on frog's turns, measured; 0 means no cap.
+    var dailyEnergyCap: Double {
+        get { defaults.double(forKey: Self.energyCapKey) }
+        set { defaults.set(newValue, forKey: Self.energyCapKey) }
+    }
+
+    /// Watt-hours this Mac measured today (since midnight), every model.
+    func macEnergyToday(at date: Date = .now) -> Double {
+        let today = Self.day(date)
+        return (store.energy ?? [:]).values.reduce(0) { sum, byHour in
+            sum + byHour.filter { $0.key.hasPrefix(today) }.values.reduce(0) { $0 + $1[0] }
+        }
+    }
+
+    /// Models on this Mac pause for the rest of the day once the cap is reached. Energy is
+    /// recorded as turns end, so a turn under way finishes.
+    var overEnergyCap: Bool { dailyEnergyCap > 0 && macEnergyToday() >= dailyEnergyCap }
 
     private static func median(_ v: [Double]) -> Double? {
         guard !v.isEmpty else { return nil }
