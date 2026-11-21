@@ -202,14 +202,15 @@ struct LiveRow: View {
                     }
                 }
             } else {
-                // The answer is writing: no row, the stats 2 under its text. Drawn over the fixed
-                // space under the last row, so they add no height: the stop at a long answer's
-                // start (the scroll code) counts that space and nothing else.
+                // The answer is writing: no row, the stats under its text where its footer will
+                // be (the footer's gap), so finishing swaps the words and moves nothing. Drawn
+                // over the fixed space under the last row, so they add no height: the stop at a
+                // long answer's start (the scroll code) counts that space and nothing else.
                 Color.clear.frame(height: 0)
                     .overlay(alignment: .topLeading) {
                         statsLine(stats)
                             .fixedSize(horizontal: false, vertical: true)
-                            .offset(y: space.gaps.stats)
+                            .offset(y: space.gaps.footer)
                     }
             }
         }

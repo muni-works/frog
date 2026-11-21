@@ -80,7 +80,7 @@ after(async () => {
 
 /** The reply's line boxes and its box, in px from the prompt bubble's bottom and the column's
  * left edge. The caret and the stats sit outside `.md`: only the words are measured. */
-const lines = (p: Page) => p.eval<{ box: number[]; lines: number[][]; md: number } | null>(`(() => {
+const lines = (p: Page) => p.eval<{ tail: number[] | null; box: number[]; lines: number[][]; md: number } | null>(`(() => {
   const say = document.querySelector('.tx .say[data-item="m1"]');
   const me = document.querySelector('.tx .me');
   const col = document.querySelector('.tx');
@@ -91,7 +91,11 @@ const lines = (p: Page) => p.eval<{ box: number[]; lines: number[][]; md: number
   const r = document.createRange(); r.selectNodeContents(md);
   const q = (v) => Math.round(v * 2) / 2;
   const s = say.getBoundingClientRect();
+  // The line under the reply: its live stats while it writes, its footer once it's done.
+  const under = document.querySelector('.tx .live-tail .live-stats') ?? document.querySelector('.tx .turn-foot');
+  const u = under?.getBoundingClientRect();
   return {
+    tail: u ? [q(u.left - x0), q(u.top - y0)] : null,
     box: [q(s.left - x0), q(s.top - y0), q(s.width), q(s.height)],
     lines: [...r.getClientRects()].filter((b) => b.width > 0).map((b) => [q(b.left - x0), q(b.top - y0), q(b.width), q(b.height)]),
     md: md.textContent.length,
@@ -114,6 +118,9 @@ test("a finished reply's words are where they were while it streamed", { skip, t
     assert.ok(live && done && live.lines.length > 4, `measured the reply (${JSON.stringify(live)})`);
     assert.deepEqual(done.box, live.box, "the reply's box didn't move or change size (a caret on a line of its own did)");
     assert.deepEqual(done.lines, live.lines, "every line of the reply is where it was");
+    // The stats under the writing answer become its footer in place: same top, same left.
+    assert.ok(live.tail && done.tail, `measured the stats and the footer (${JSON.stringify([live.tail, done.tail])})`);
+    assert.deepEqual(done.tail, live.tail, "the footer sits where the stats were");
   } finally { await p.close(); }
 });
 

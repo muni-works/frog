@@ -280,11 +280,12 @@ struct TurnView: View, Equatable {
                 if let end = turn.end {
                     // An unpinned footer keeps its place and fades in on hover, so it neither
                     // covers the answer nor shifts what's below.
+                    let footer = EndView.footerLeads(end, turn.usage)
                     EndView(reason: end, usage: turn.usage, turn: turn, answer: answer, hovering: hovering)
                         // Set off from the answer above it (see `TurnSpace`): the turn's last
                         // line reads as a caption, not as one more paragraph.
-                        .padding(.top, isFooter(end) ? space.footer : 0)
-                        .opacity(pinsFooter || !isFooter(end) || hovering ? 1 : 0)
+                        .padding(.top, footer ? space.footer : 0)
+                        .opacity(pinsFooter || !footer || hovering ? 1 : 0)
                         .allowsHitTesting(pinsFooter || hovering)
                 }
                 // Under the reply and its stats once the turn ends (canvas M2): the note Frog kept,
@@ -304,13 +305,6 @@ struct TurnView: View, Equatable {
 
     /// A finished turn's model/speed caption, as opposed to a banner for how it stopped
     /// (interrupted, an error), which always shows.
-    private func isFooter(_ end: EndReason) -> Bool {
-        switch end {
-        case .complete, .denied: true
-        default: false
-        }
-    }
-
     /// Before the first answer, the model may still be getting ready: tang reading a downloaded
     /// model's weights (it accepts the first request before they're resident), or Apple
     /// Intelligence starting. That's loading, not reasoning, until the first response streams.

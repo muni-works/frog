@@ -32,8 +32,25 @@ final class StreamingPositionTests: XCTestCase {
         "All eleven upload tests pass now, every run.",
     ].joined(separator: "\n\n")
 
-    override func setUp() async throws { InkReveal.off = true }
-    override func tearDown() async throws { InkReveal.off = false }
+    override func setUp() async throws {
+        InkReveal.off = true
+        TranscriptMetrics.enabled = true
+        TranscriptMetrics.shared.reset()
+    }
+    override func tearDown() async throws {
+        InkReveal.off = false
+        TranscriptMetrics.shared.reset()
+        TranscriptMetrics.enabled = false
+    }
+
+    /// The top of the line under the reply (`kind`: its live stats, or its footer), from the
+    /// bottom of the reply's last prose row, in the transcript's metrics.
+    private func under(_ kind: TranscriptMetrics.Kind) -> Double? {
+        let rows = TranscriptMetrics.shared.rows.values
+        guard let line = rows.first(where: { $0.kind == kind }),
+              let prose = rows.filter({ $0.kind == .prose }).map(\.box.maxY).max() else { return nil }
+        return (Double(line.box.minY - prose) * 2).rounded() / 2
+    }
 
     /// The reply's text view and its lines, in the transcript's document, to the half point.
     private func measure(_ host: NSView) throws -> [[Double]] {
@@ -84,6 +101,7 @@ final class StreamingPositionTests: XCTestCase {
         host.layoutSubtreeIfNeeded()
         pump(0.3)
         let live = try measure(host)
+        let stats = under(.stats)
         shoot(host, "stream-mac-live")
 
         let done = try JSONEncoder().encode(Self.reply)
@@ -94,10 +112,15 @@ final class StreamingPositionTests: XCTestCase {
         host.layoutSubtreeIfNeeded()
         pump(0.3)
         let rest_ = try measure(host)
+        let footer = under(.footer)
         shoot(host, "stream-mac-done")
 
         XCTAssertGreaterThan(live.count, 4, "measured the reply's lines")
         XCTAssertEqual(rest_.first, live.first, "the reply's text view didn't move or change size")
         XCTAssertEqual(rest_, live, "every line of the reply is where it was")
+        // The stats under the writing answer become its footer in place.
+        XCTAssertNotNil(stats, "measured the live stats")
+        XCTAssertNotNil(footer, "measured the footer")
+        XCTAssertEqual(footer, stats, "the footer sits where the stats were")
     }
 }
