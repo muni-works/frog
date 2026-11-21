@@ -470,6 +470,17 @@ struct WorkspaceView: View {
         openInFocused(s)
     }
 
+    /// A `frog://new` link, in the known checkout of its repo when there is one (git runs off
+    /// the main thread), else a plain chat.
+    private func openLink(_ link: NewSessionLink) {
+        guard link.repo != nil else { panes.open(link, in: nil); return }
+        let folders = Recents.all + panes.items.map(\.workspace.folder)
+        Task {
+            let remotes = await Task.detached(priority: .userInitiated) { NewSessionLink.knownRemotes(folders) }.value
+            panes.open(link, in: NewSessionLink.checkout(of: link.repo, in: remotes))
+        }
+    }
+
     /// A new chat in the focused pane, the composer taking the keyboard (⌘N).
     private func newSession() {
         panes.backToApp()
@@ -603,6 +614,13 @@ struct WorkspaceView: View {
             if let s = SettingsRequest.take() { showSettings(s) }
         }
         .onAppear { if let s = SettingsRequest.take() { showSettings(s) } }
+        // A frog://new link (the web's local-model rows): the front window opens it, or this
+        // one if it just opened for it (a cold launch).
+        .onReceive(NotificationCenter.default.publisher(for: NewSessionRequest.name)) { _ in
+            guard window?.isKeyWindow == true || NSApp.keyWindow == nil else { return }
+            if let link = NewSessionRequest.take() { openLink(link) }
+        }
+        .onAppear { if let link = NewSessionRequest.take() { openLink(link) } }
         .onAppear { dragger.onDrop = { perform($0, at: $1) } }
         .animation(.easeOut(duration: 0.15), value: dragger.active)
         .onChange(of: layoutInputs, initial: true) { old, new in

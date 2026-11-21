@@ -263,7 +263,7 @@ extension ComposerView {
 
     func draftHooks(_ view: some View) -> some View {
         view
-            .onAppear { restoreDraft() }
+            .onAppear { restoreDraft(); takeRestoredOnAppear() }
             .onChange(of: text) { saveDraftSoon() }
             .onChange(of: attachments) { saveDraftSoon() }
             .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
@@ -286,6 +286,14 @@ extension ComposerView {
         if Self.sendOnAppear.remove(workspace.folder.path) != nil {
             Task { @MainActor in sendDraft() }
         }
+    }
+
+    /// Text handed to the conversation before this composer was on screen (a `frog://new`
+    /// link's message, `NewSessionLink.fill`): the `restored` hook only sees later changes.
+    func takeRestoredOnAppear() {
+        guard !conversation.restored.isEmpty else { return }
+        (text, attachments, untyped) = conversation.takeRestored(into: text, attachments: attachments, untyped: untyped)
+        controller.focus()
     }
 
     static func draftCursor(_ tv: NSTextView?, text: String) -> Int {

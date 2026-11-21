@@ -141,11 +141,17 @@ final class Workspace {
 
     /// Switch this conversation to a model, and remember it for the next one.
     func use(_ spec: String) {
+        useHere(spec)
+        UserDefaults.standard.set(spec, forKey: "lastModel")
+    }
+
+    /// Switch this conversation to a model without remembering it: a `frog://new` link chose
+    /// it, not the person, so the next new conversation starts as it would have.
+    func useHere(_ spec: String) {
         pendingDownload = nil
         preferredModel = spec
         explicitModelChoice = spec
         conversation?.setModel(spec)
-        UserDefaults.standard.set(spec, forKey: "lastModel")
     }
 
     /// The model the picker should show. A selected download takes precedence over the engine's
