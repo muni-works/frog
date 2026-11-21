@@ -1203,7 +1203,9 @@ impl Panes {
     /// The marker comes before the prompt is drawn (bash expands PS1, a theme runs `git status`,
     /// then the line editor starts), so then wait for the prompt itself to land after the
     /// marker and for the drawing to stop: typed before the line editor starts, a command is
-    /// echoed twice. A prompt that prints nothing gets a longer quiet instead.
+    /// echoed twice. Drawn means the output since the marker ends mid-line, the cursor on the
+    /// prompt: whole lines there (a `PROMPT_COMMAND` that prints, macOS bash's zsh notice) come
+    /// before it. A prompt that never leaves a partial line gets a longer quiet instead.
     ///
     /// A shell with markers waits for its marker, not for output to settle: an rc that prints
     /// and then works for a while (oh-my-zsh's update check fetches before it asks) goes quiet
@@ -1212,12 +1214,12 @@ impl Panes {
     /// (`budget`, at least 5 s): a shell slower than a fixed floor to start (a loaded CI runner)
     /// got the command typed early, echoed onto its first prompt line.
     async fn wait_ready(&self, id: &str, budget: Duration) {
-        let (grid, marks) = {
+        let (grid, marks, sent_at) = {
             let s = self.state.lock().unwrap();
             let Some(t) = s.panes.get(id).and_then(|p| p.term.as_ref()) else {
                 return;
             };
-            (t.grid.clone(), t._rc.is_some())
+            (t.grid.clone(), t._rc.is_some(), t.sent_at)
         };
         let floor = Duration::from_secs(5);
         let limit = if marks { budget.max(floor) } else { floor };
@@ -1225,11 +1227,16 @@ impl Panes {
         while started.elapsed() < limit {
             {
                 let g = grid.lock().unwrap();
-                if g.exit.is_some() {
+                // The model's last command is still running: `run` says so at once.
+                if g.exit.is_some() || (g.prompts > 0 && g.prompts <= sent_at) {
                     return;
                 }
-                let drawn = g.mark() > g.prompt_mark;
-                let settle = Duration::from_millis(if drawn { 120 } else { 1000 });
+                let drawn = g
+                    .since(g.prompt_mark, None)
+                    .chars()
+                    .last()
+                    .is_some_and(|c| c != '\n' && c != '\r');
+                let settle = Duration::from_millis(if drawn { 120 } else { 2000 });
                 if g.prompts > 0 && g.quiet_for() > settle {
                     return;
                 }
@@ -1862,12 +1869,14 @@ mod tests {
     }
 
     /// A prompt that takes a while to draw after its marker (a git-status theme; the marker
-    /// prints first, then the prompt is expanded and the line editor starts): a command typed in
-    /// that gap is echoed by the tty and again by the line editor. The command waits for the
-    /// prompt itself, and every run does, not only the first.
+    /// prints first, then the prompt is expanded and the line editor starts), with a line
+    /// printed between them (bash's `PROMPT_COMMAND`; on CI, macOS bash's zsh notice): a command
+    /// typed in that gap is echoed by the tty and again by the line editor. The command waits
+    /// for the prompt itself, and every run does, not only the first.
     #[tokio::test]
     async fn terminal_run_waits_for_a_slow_prompt_to_draw() {
-        let rc = "setopt prompt_subst 2>/dev/null\nPS1='$(sleep 1)> '\n";
+        let rc =
+            "setopt prompt_subst 2>/dev/null\nPS1='$(sleep 1)> '\nPROMPT_COMMAND='echo note'\n";
         let Some((panes, _rx, home)) = hermetic_shell(rc) else {
             return;
         };
