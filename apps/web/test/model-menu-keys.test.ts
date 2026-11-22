@@ -35,6 +35,7 @@ test("ArrowDown from the search field lands on a local row that links out", { sk
   const focused = await page!.eval<{ cls: string; href: string | null; label: string | null }>(`(() => { const a = document.activeElement;
     return { cls: a.className, href: a.getAttribute('href'), label: a.getAttribute('aria-label') } })()`);
   assert.match(focused.cls, /cz-local/);
-  assert.ok(focused.href === "/download" || focused.href === "/mac", focused.href ?? "no href");
+  // A local row hands off to the Mac app (frog://new, #505); without the app it falls back to /download or /mac.
+  assert.ok(/^frog(-dev)?:\/\/new\?/.test(focused.href ?? "") || focused.href === "/download" || focused.href === "/mac", focused.href ?? "no href");
   assert.match(focused.label ?? "", /^Gemma 3 4B, runs on your Mac, /);
 });
